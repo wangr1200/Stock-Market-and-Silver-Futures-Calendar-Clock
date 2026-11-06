@@ -1,616 +1,985 @@
+# -*- coding: utf-8 -*-
+"""
+Stock Market and Silver Futures Calendar Clock (桌面市场日历时钟)
+完整功能升级版：实时接入行情 + 倒计时 + 托盘 + 主题配色
+"""
+
 import sys
-import calendar
-from datetime import datetime, date, time, timedelta
 import os
-import winreg
+import datetime
+import threading
+import requests
 import traceback
-import webbrowser
-from PyQt5.QtCore import Qt, QTimer, QPoint, QSettings, QSharedMemory
-from PyQt5.QtWidgets import (
-    QApplication, QDialog, QGridLayout, 
-    QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
-    QCheckBox, QSlider, QFormLayout, QSystemTrayIcon, QMenu, QAction, QStyle, QMessageBox
-)
+import winreg
+from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, 
+                             QHBoxLayout, QGraphicsDropShadowEffect, QPushButton, 
+                             QDialog, QCalendarWidget, QSlider, QCheckBox, 
+                             QFormLayout, QComboBox, QColorDialog, QSystemTrayIcon, QMenu, QAction)
+from PyQt5.QtCore import Qt, QTimer, QPoint, QDate, QRectF, pyqtSignal, QObject, QSettings
+from PyQt5.QtGui import QColor, QBrush, QDesktopServices, QPainter, QIcon, QPixmap
+from PyQt5.QtCore import QUrl
+
+REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APP_NAME = "MarketDesktopClock"
+
+def set_autostart(enable=True):
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_ALL_ACCESS)
+        if enable:
+            app_path = os.path.abspath(sys.argv[0])
+            if app_path.endswith(".py"):
+                cmd = f'"{sys.executable}" "{app_path}"'
+            else:
+                cmd = f'"{app_path}"'
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
+        else:
+            try:
+                winreg.DeleteValue(key, APP_NAME)
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+        return True
+    except Exception as e:
+        print(f"设置开机自启失败: {e}")
+        return False
+
+def check_autostart():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, APP_NAME)
+        winreg.CloseKey(key)
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+COLOR_THEMES = {
+    "天蓝色 (默认极客)": {
+        "bg_color": "#1e222b",
+        "time_color": "#38bdf8",
+        "card_bg": "#262b36",
+        "accent": "#0284c7"
+    },
+    "炫酷暗黑 (Cool Black)": {
+        "bg_color": "#121212",
+        "time_color": "#f43f5e",
+        "card_bg": "#1e1e1e",
+        "accent": "#e11d48"
+    },
+    "翡翠森林 (Emerald Green)": {
+        "bg_color": "#064e3b",
+        "time_color": "#34d399",
+        "card_bg": "#047857",
+        "accent": "#059669"
+    },
+    "紫罗兰 (Midnight Violet)": {
+        "bg_color": "#2e1065",
+        "time_color": "#c084fc",
+        "card_bg": "#3b0764",
+        "accent": "#9333ea"
+    },
+    "浪漫樱粉 (Sakura Pink)": {
+        "bg_color": "#831843",
+        "time_color": "#f472b6",
+        "card_bg": "#9d174d",
+        "accent": "#db2777"
+    },
+    "琥珀烫金 (Warm Amber)": {
+        "bg_color": "#451a03",
+        "time_color": "#fbbf24",
+        "card_bg": "#78350f",
+        "accent": "#d97706"
+    }
+}
+
+HOLIDAY_SCHEDULE = {
+    "2026-01-01": {"types": ["A", "HK", "AG"], "reason": "元旦休市"},
+    "2026-01-02": {"types": ["A", "HK", "AG"], "reason": "元旦假期休市"},
+    "2026-02-16": {"types": ["A", "HK", "AG"], "reason": "春节假期休市"},
+    "2026-02-17": {"types": ["A", "HK", "AG"], "reason": "春节假期休市"},
+    "2026-02-18": {"types": ["A", "HK", "AG"], "reason": "春节假期休市"},
+    "2026-02-19": {"types": ["A", "HK", "AG"], "reason": "春节假期休市"},
+    "2026-02-20": {"types": ["A", "AG"], "reason": "春节假期休市"},
+    "2026-02-23": {"types": ["A", "AG"], "reason": "春节假期休市"},
+    "2026-04-06": {"types": ["A", "HK", "AG"], "reason": "清明节休市"},
+    "2026-05-01": {"types": ["A", "HK", "AG"], "reason": "劳动节休市"},
+    "2026-05-04": {"types": ["A", "AG"], "reason": "劳动节假期休市"},
+    "2026-05-05": {"types": ["A", "AG"], "reason": "劳动节假期休市"},
+    "2026-05-25": {"types": ["HK"], "reason": "佛诞日休市（港股）"},
+    "2026-06-19": {"types": ["A", "HK", "AG"], "reason": "端午节休市"},
+    "2026-07-01": {"types": ["HK"], "reason": "香港特别行政区成立纪念日休市（港股）"},
+    "2026-09-25": {"types": ["A", "AG"], "reason": "中秋节休市"},
+    "2026-09-28": {"types": ["HK"], "reason": "中秋节翌日休市（港股）"},
+    "2026-10-01": {"types": ["A", "HK", "AG"], "reason": "国庆节休市"},
+    "2026-10-02": {"types": ["A", "HK", "AG"], "reason": "国庆节假期休市"},
+    "2026-10-05": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2026-10-06": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2026-10-07": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2026-10-19": {"types": ["HK"], "reason": "重阳节休市（港股）"},
+    "2026-12-25": {"types": ["HK"], "reason": "圣诞节休市（港股）"},
+
+    "2027-01-01": {"types": ["A", "HK", "AG"], "reason": "元旦休市"},
+    "2027-02-05": {"types": ["A", "HK", "AG"], "reason": "A股/白银休市；港股农历新年前夕半日市（12:00收市）"},
+    "2027-02-08": {"types": ["A", "HK", "AG"], "reason": "春节假期休市（农历年初三）"},
+    "2027-02-09": {"types": ["A", "HK", "AG"], "reason": "春节假期休市（农历年初四）"},
+    "2027-02-10": {"types": ["A", "AG"], "reason": "春节假期休市"},
+    "2027-02-11": {"types": ["A", "AG"], "reason": "春节假期休市"},
+    "2027-02-12": {"types": ["A", "AG"], "reason": "春节假期休市"},
+    "2027-03-26": {"types": ["HK"], "reason": "耶稣受难节休市（港股）"},
+    "2027-03-29": {"types": ["HK"], "reason": "复活节周一休市（港股）"},
+    "2027-04-05": {"types": ["A", "HK", "AG"], "reason": "清明节休市"},
+    "2027-05-03": {"types": ["A", "AG"], "reason": "劳动节假期休市"},
+    "2027-05-04": {"types": ["A", "AG"], "reason": "劳动节假期休市"},
+    "2027-05-05": {"types": ["A", "AG"], "reason": "劳动节假期休市"},
+    "2027-05-13": {"types": ["HK"], "reason": "佛诞休市（港股）"},
+    "2027-06-09": {"types": ["A", "HK", "AG"], "reason": "端午节休市"},
+    "2027-07-01": {"types": ["HK"], "reason": "香港特别行政区成立纪念日休市（港股）"},
+    "2027-09-15": {"types": ["A", "AG"], "reason": "中秋节休市（A股/白银）"},
+    "2027-09-16": {"types": ["HK"], "reason": "中秋节翌日休市（港股）"},
+    "2027-10-01": {"types": ["A", "HK", "AG"], "reason": "国庆日休市"},
+    "2027-10-04": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2027-10-05": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2027-10-06": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2027-10-07": {"types": ["A", "AG"], "reason": "国庆节假期休市"},
+    "2027-10-08": {"types": ["HK"], "reason": "重阳节休市（港股）"},
+    "2027-12-24": {"types": ["HK"], "reason": "圣诞前夕半日市（12:00收市，港股）"},
+    "2027-12-27": {"types": ["HK"], "reason": "圣诞后首个工作日休市（港股）"},
+    "2027-12-31": {"types": ["HK"], "reason": "新年前夕半日市（12:00收市，港股）"}
+}
+
+class SilentTipDialog(QDialog):
+    def __init__(self, title, message, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(320, 160)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.init_ui(title, message)
+
+    def init_ui(self, title_text, msg_text):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+
+        container = QWidget(self)
+        container.setStyleSheet("""
+            QWidget {
+                background-color: #1e222b;
+                border-radius: 12px;
+                border: 1px solid rgba(56, 189, 248, 0.3);
+            }
+        """)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        shadow.setOffset(0, 4)
+        container.setGraphicsEffect(shadow)
+        main_layout.addWidget(container)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        title_lbl = QLabel(f"📌 {title_text}")
+        title_lbl.setStyleSheet("color: #38bdf8; font-size: 15px; font-weight: bold; border: none; background: transparent;")
+        layout.addWidget(title_lbl)
+
+        msg_lbl = QLabel(msg_text)
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet("color: #e2e8f0; font-size: 13px; border: none; background: transparent; line-height: 1.4;")
+        layout.addWidget(msg_lbl)
+
+        ok_btn = QPushButton("确定")
+        ok_btn.setCursor(Qt.PointingHandCursor)
+        ok_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7;
+                color: white;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-weight: bold;
+                font-size: 13px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #0369a1;
+            }
+        """)
+        ok_btn.clicked.connect(self.accept)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        layout.addLayout(btn_layout)
+
+
+class CustomCalendarWidget(QCalendarWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def paintCell(self, painter, rect, date):
+        super().paintCell(painter, rect, date)
+        date_str = date.toString("yyyy-MM-dd")
+        if date_str in HOLIDAY_SCHEDULE:
+            info = HOLIDAY_SCHEDULE[date_str]
+            types = info.get("types", []) if isinstance(info, dict) else info
+            
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
+
+            color_map = {
+                "A": QColor("#ef4444"),
+                "HK": QColor("#a855f7"),
+                "AG": QColor("#38bdf8")
+            }
+
+            dot_size = 6
+            total_dots = len(types)
+            spacing = 4
+            total_width = total_dots * dot_size + (total_dots - 1) * spacing
+            start_x = rect.x() + (rect.width() - total_width) / 2
+            y = rect.y() + rect.height() - 8
+
+            for i, t in enumerate(types):
+                if t in color_map:
+                    painter.setBrush(QBrush(color_map[t]))
+                    painter.setPen(Qt.NoPen)
+                    x = start_x + i * (dot_size + spacing)
+                    painter.drawEllipse(QRectF(x, y, dot_size, dot_size))
+
+            painter.restore()
+
+class MarketCalendarDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("2026-2027 股市及白银期货休市日历")
+        self.resize(520, 440)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        title_label = QLabel("📅 2026–2027 年股市及白银期货休市安排看板")
+        title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #1e293b; padding: 5px;")
+        layout.addWidget(title_label)
+
+        self.calendar = CustomCalendarWidget(self)
+        self.calendar.setGridVisible(True)
+        self.calendar.setStyleSheet("""
+            QCalendarWidget QAbstractItemView:enabled {
+                font-size: 14px;
+                color: #334155;
+                selection-background-color: #3b82f6;
+                selection-color: white;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #1e222b;
+            }
+            QCalendarWidget QToolButton {
+                color: white;
+                font-size: 13px;
+                font-weight: bold;
+            }
+        """)
+        self.calendar.clicked.connect(self.on_date_clicked)
+        layout.addWidget(self.calendar)
+
+        legend_label = QLabel("🔴 A股休市  |  🟣 港股休市  |  🔵 白银期货休市")
+        legend_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: bold; margin-top: 6px;")
+        layout.addWidget(legend_label)
+
+        hint_label = QLabel("💡 点击带圆点的日期可查看具体休市原因")
+        hint_label.setStyleSheet("color: #64748b; font-size: 12px; font-weight: bold; padding: 4px;")
+        layout.addWidget(hint_label)
+
+    def on_date_clicked(self, qdate):
+        date_str = qdate.toString("yyyy-MM-dd")
+        if date_str in HOLIDAY_SCHEDULE:
+            info = HOLIDAY_SCHEDULE[date_str]
+            reason = info.get("reason", "休市安排") if isinstance(info, dict) else "休市安排"
+            types = info.get("types", [])
+            
+            type_desc = []
+            if "A" in types: type_desc.append("A股")
+            if "HK" in types: type_desc.append("港股")
+            if "AG" in types: type_desc.append("白银期货")
+            
+            types_str = "、".join(type_desc)
+            msg_text = f"休市市场：{types_str}\n具体说明：{reason}"
+            dlg = SilentTipDialog(f"休市提醒 ({date_str})", msg_text, self)
+            dlg.exec_()
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("设置")
-        self.setFixedSize(300, 260)
-        self.parent_widget = parent
-        self.setStyleSheet("QDialog { background-color: #2b3035; color: #ffffff; border-radius: 10px; } QLabel { color: #ffffff; font-size: 13px; } QCheckBox { color: #ffffff; spacing: 8px; } QPushButton { background-color: #34495e; color: #ffffff; border-radius: 6px; padding: 6px 14px; font-weight: bold; border: 1px solid rgba(255,255,255,0.1); } QPushButton:hover { background-color: #2980b9; }")
+        self.parent_window = parent
+        self.setWindowTitle("桌面时钟高级设置")
+        self.resize(340, 260)
+        self.setStyleSheet("background-color: #1e222b; color: white;")
+        self.init_ui()
 
+    def init_ui(self):
         layout = QVBoxLayout(self)
+        title = QLabel("⚙ 桌面时钟设置与个性化")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #38bdf8; margin-bottom: 8px;")
+        layout.addWidget(title)
+
         form_layout = QFormLayout()
 
-        self.ontop_chk = QCheckBox("窗口总在最前端")
-        self.ontop_chk.setChecked(self.parent_widget.is_on_top if self.parent_widget else True)
-        self.ontop_chk.stateChanged.connect(self.toggle_ontop)
-        form_layout.addRow(self.ontop_chk)
-
-        self.hide_chk = QCheckBox("关闭时隐藏到托盘")
-        self.hide_chk.setChecked(self.parent_widget.close_to_tray if self.parent_widget else True)
-        self.hide_chk.stateChanged.connect(self.toggle_hide)
-        form_layout.addRow(self.hide_chk)
-
         self.autostart_chk = QCheckBox("开机自动启动")
-        self.autostart_chk.setChecked(self.check_autostart_status())
+        self.autostart_chk.setChecked(check_autostart())
+        self.autostart_chk.setStyleSheet("color: #e2e8f0; font-size: 13px; font-weight: bold;")
         self.autostart_chk.stateChanged.connect(self.toggle_autostart)
         form_layout.addRow(self.autostart_chk)
 
+        self.ontop_chk = QCheckBox("窗口始终置顶")
+        self.ontop_chk.setChecked(bool(self.parent_window.windowFlags() & Qt.WindowStaysOnTopHint))
+        self.ontop_chk.setStyleSheet("color: #e2e8f0; font-size: 13px;")
+        self.ontop_chk.stateChanged.connect(self.toggle_ontop)
+        form_layout.addRow(self.ontop_chk)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(list(COLOR_THEMES.keys()) + ["🎨 自定义数字颜色..."])
+        settings = QSettings("MarketClock", "DesktopMarketClock")
+        saved_theme_idx = settings.value("theme_index", 0, type=int)
+        self.theme_combo.setCurrentIndex(saved_theme_idx)
+        self.theme_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #262b36;
+                color: #e2e8f0;
+                border: 1px solid #475569;
+                border-radius: 4px;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1e222b;
+                color: white;
+                selection-background-color: #0284c7;
+            }
+        """)
+        self.theme_combo.currentIndexChanged.connect(self.change_theme)
+        form_layout.addRow("皮肤/主题配色:", self.theme_combo)
+
         self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(50, 255)
-        self.opacity_slider.setValue(self.parent_widget.current_opacity if self.parent_widget else 245)
+        self.opacity_slider.setRange(40, 100)
+        curr_opacity = int(self.parent_window.windowOpacity() * 100)
+        self.opacity_slider.setValue(curr_opacity if curr_opacity > 0 else 95)
+        self.opacity_slider.setStyleSheet("""
+            QSlider::groove:horizontal { background: #334155; height: 6px; border-radius: 3px; } 
+            QSlider::handle:horizontal { background: #38bdf8; width: 14px; margin: -4px 0; border-radius: 7px; }
+        """)
         self.opacity_slider.valueChanged.connect(self.change_opacity)
-        form_layout.addRow("背景透明度:", self.opacity_slider)
+        form_layout.addRow("窗口透明度:", self.opacity_slider)
 
         layout.addLayout(form_layout)
-        close_btn = QPushButton("确定")
-        close_btn.clicked.connect(self.close)
+
+        close_btn = QPushButton("保存并关闭")
+        close_btn.setStyleSheet("background-color: #0284c7; color: white; border-radius: 5px; padding: 7px; font-weight: bold; margin-top: 10px;")
+        close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
-    def toggle_ontop(self, state):
-        if self.parent_widget:
-            is_on = (state == Qt.Checked)
-            self.parent_widget.is_on_top = is_on
-            flags = self.parent_widget.windowFlags()
-            if is_on:
-                self.parent_widget.setWindowFlags(flags | Qt.WindowStaysOnTopHint)
-            else:
-                self.parent_widget.setWindowFlags(flags & ~Qt.WindowStaysOnTopHint)
-            self.parent_widget.show()
-            self.parent_widget.save_settings()
-
-    def toggle_hide(self, state):
-        if self.parent_widget:
-            self.parent_widget.close_to_tray = (state == Qt.Checked)
-            self.parent_widget.save_settings()
-
-    def check_autostart_status(self):
-        key_path = r"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-        app_name = "MarketClockWidget"
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
-            winreg.QueryValueEx(key, app_name)
-            winreg.CloseKey(key)
-            return True
-        except WindowsError:
-            return False
-
     def toggle_autostart(self, state):
-        key_path = r"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-        app_name = "MarketClockWidget"
-        script_path = os.path.abspath(sys.argv[0])
-        python_exe = sys.executable.replace("python.exe", "pythonw.exe")
-        cmd = f'"{python_exe}" "{script_path}"'
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+        enable = (state == Qt.Checked)
+        success = set_autostart(enable)
+        if success:
+            msg = "已成功开启开机自启！" if enable else "已取消开机自启。"
+            dlg = SilentTipDialog("开机自启设置", msg, self)
+            dlg.exec_()
+        else:
+            dlg = SilentTipDialog("错误", "修改开机自启失败，请尝试以管理员身份运行程序。", self)
+            dlg.exec_()
+
+    def toggle_ontop(self, state):
+        if self.parent_window:
+            flags = self.parent_window.windowFlags()
             if state == Qt.Checked:
-                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, cmd)
+                self.parent_window.setWindowFlags(flags | Qt.WindowStaysOnTopHint)
             else:
-                try:
-                    winreg.DeleteValue(key, app_name)
-                except WindowsError:
-                    pass
-            winreg.CloseKey(key)
-        except Exception as e:
-            print("设置开机自启失败:", e)
+                self.parent_window.setWindowFlags(flags & ~Qt.WindowStaysOnTopHint)
+            self.parent_window.show()
+            self.parent_window.save_settings()
 
-    def change_opacity(self, value):
-        if self.parent_widget:
-            self.parent_widget.current_opacity = value
-            style = "QWidget { background-color: rgba(43, 48, 53, " + str(value) + "); border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); }"
-            self.parent_widget.card.setStyleSheet(style)
-            self.parent_widget.save_settings()
-
-
-class CalendarDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("A股/港股动态休市日历")
-        self.setFixedSize(460, 580)
+    def change_theme(self, index):
+        if not self.parent_window:
+            return
+        settings = QSettings("MarketClock", "DesktopMarketClock")
+        settings.setValue("theme_index", index)
         
-        now = datetime.now()
-        self.current_year = now.year
-        self.current_month = now.month
+        theme_names = list(COLOR_THEMES.keys())
+        if index < len(theme_names):
+            theme_key = theme_names[index]
+            theme = COLOR_THEMES[theme_key]
+            self.parent_window.apply_theme(
+                bg_color=theme["bg_color"],
+                time_color=theme["time_color"],
+                card_bg=theme["card_bg"],
+                accent=theme["accent"]
+            )
+        else:
+            color = QColorDialog.getColor(QColor(self.parent_window.current_time_color), self, "选择自定义数字显示颜色")
+            if color.isValid():
+                self.parent_window.apply_theme(
+                    bg_color=self.parent_window.current_bg_color,
+                    time_color=color.name(),
+                    card_bg=self.parent_window.current_card_bg,
+                    accent=self.parent_window.current_accent
+                )
+        self.parent_window.save_settings()
 
-        self.setStyleSheet("QDialog { background-color: #2b3035; color: #ffffff; border-radius: 12px; } QLabel { color: #ffffff; font-size: 13px; } QPushButton { background-color: #34495e; color: #ffffff; border-radius: 6px; padding: 6px 14px; font-weight: bold; border: 1px solid rgba(255,255,255,0.1); } QPushButton:hover { background-color: #2980b9; }")
+    def change_opacity(self, val):
+        if self.parent_window:
+            self.parent_window.setWindowOpacity(val / 100.0)
+            self.parent_window.save_settings()
 
-        layout = QVBoxLayout(self)
-        top_bar = QWidget()
-        top_bar.setStyleSheet("QWidget { background-color: #1f3a60; border-radius: 8px; padding: 4px; }")
-        top_layout = QHBoxLayout(top_bar)
+
+# 后台实时行情请求线程
+class SilverQuoteWorker(QObject, threading.Thread):
+    data_fetched = pyqtSignal(dict)
+
+    def __init__(self):
+        QObject.__init__(self)
+        threading.Thread.__init__(self)
+        self.daemon = True
+
+    def run(self):
+        import time
+        while True:
+            try:
+                headers = {"Referer": "https://finance.sina.com.cn"}
+                url = "https://hq.sinajs.cn/list=nf_ag2702"
+                resp = requests.get(url, headers=headers, timeout=3)
+                if resp.status_code == 200 and "hq_str_nf_ag2702" in resp.text:
+                    data_str = resp.text.split('"')[1]
+                    if data_str:
+                        parts = data_str.split(',')
+                        if len(parts) > 13:
+                            contract = parts[12] if parts[12] else "AG2702"
+                            latest = float(parts[8]) if parts[8] else float(parts[2])
+                            pre_settle = float(parts[3]) if parts[3] else 0.0
+                            change = latest - pre_settle
+                            change_pct = (change / pre_settle * 100) if pre_settle > 0 else 0.0
+                            volume = parts[11] if len(parts) > 11 else "0"
+                            open_interest = parts[10] if len(parts) > 10 else "0"
+                            
+                            info = {
+                                "contract": contract if contract else "AG2702",
+                                "price": f"{latest:.1f}",
+                                "change": f"{change:+.1f}",
+                                "change_pct": f"{change_pct:+.2f}%",
+                                "volume": volume,
+                                "open_interest": open_interest
+                            }
+                            self.data_fetched.emit(info)
+            except Exception:
+                pass
+            time.sleep(10)
+
+
+class ClockWindow(QWidget):
+
+    def load_settings(self):
+        settings = QSettings("MarketClock", "DesktopMarketClock")
         
-        self.prev_btn = QPushButton("◀")
-        self.prev_btn.setFixedSize(36, 30)
-        self.prev_btn.clicked.connect(self.prev_month)
+        # 1. 恢复主题
+        theme_idx = settings.value("theme_index", 0, type=int)
+        theme_names = list(COLOR_THEMES.keys())
+        if 0 <= theme_idx < len(theme_names):
+            t_key = theme_names[theme_idx]
+            t = COLOR_THEMES[t_key]
+            self.apply_theme(t["bg_color"], t["time_color"], t["card_bg"], t["accent"])
         
-        self.next_btn = QPushButton("▶")
-        self.next_btn.setFixedSize(36, 30)
-        self.next_btn.clicked.connect(self.next_month)
+        # 2. 恢复透明度
+        opacity = settings.value("opacity", 0.95, type=float)
+        self.setWindowOpacity(opacity)
         
-        self.month_title = QLabel()
-        self.month_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #ffffff;")
-        self.month_title.setAlignment(Qt.AlignCenter)
+        # 3. 恢复置顶状态
+        ontop = settings.value("ontop", True, type=bool)
+        flags = self.windowFlags()
+        if ontop:
+            self.setWindowFlags(flags | Qt.WindowStaysOnTopHint)
+        else:
+            self.setWindowFlags(flags & ~Qt.WindowStaysOnTopHint)
         
-        top_layout.addWidget(self.prev_btn)
-        top_layout.addStretch()
-        top_layout.addWidget(self.month_title)
-        top_layout.addStretch()
-        top_layout.addWidget(self.next_btn)
-        layout.addWidget(top_bar)
+        # 4. 恢复锁定状态
+        self.is_locked = settings.value("locked", False, type=bool)
+        if self.is_locked:
+            self.lock_btn.setText("🔒")
+            self.lock_btn.setToolTip("窗口已锁定（无法拖动）")
+        else:
+            self.lock_btn.setText("🔓")
+            self.lock_btn.setToolTip("窗口已解锁（可拖动）")
 
-        week_widget = QWidget()
-        week_layout = QGridLayout(week_widget)
-        week_layout.setContentsMargins(0, 5, 0, 5)
-        weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
-        for i, w in enumerate(weekdays):
-            lbl = QLabel(w)
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet("color: #e74c3c; font-size: 14px; font-weight: bold;" if i in [0, 6] else "color: #d0d0d0; font-size: 14px; font-weight: bold;")
-            week_layout.addWidget(lbl, 0, i)
-        layout.addWidget(week_widget)
+        # 5. 恢复窗口位置
+        x = settings.value("pos_x", -1, type=int)
+        y = settings.value("pos_y", -1, type=int)
+        if x != -1 and y != -1:
+            self.move(x, y)
 
-        self.days_widget = QWidget()
-        self.days_layout = QGridLayout(self.days_widget)
-        self.days_layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.days_widget)
+    def save_settings(self):
+        settings = QSettings("MarketClock", "DesktopMarketClock")
+        settings.setValue("opacity", self.windowOpacity())
+        settings.setValue("ontop", bool(self.windowFlags() & Qt.WindowStaysOnTopHint))
+        settings.setValue("locked", self.is_locked)
+        settings.setValue("pos_x", self.x())
+        settings.setValue("pos_y", self.y())
 
-        btn_layout = QHBoxLayout()
-        web_btn = QPushButton("🌐 打开东财官方休市网页")
-        web_btn.setStyleSheet("background-color: #2980b9; color: #ffffff;")
-        web_btn.clicked.connect(lambda: webbrowser.open("https://data.eastmoney.com/dcrl/close.html"))
-        
-        close_btn = QPushButton("关闭面板")
-        close_btn.clicked.connect(self.close)
-        
-        btn_layout.addWidget(web_btn)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-
-        self.update_calendar_grid()
-
-    def prev_month(self):
-        self.current_month -= 1
-        if self.current_month < 1:
-            self.current_month = 12
-            self.current_year -= 1
-        self.update_calendar_grid()
-
-    def next_month(self):
-        self.current_month += 1
-        if self.current_month > 12:
-            self.current_month = 1
-            self.current_year += 1
-        self.update_calendar_grid()
-
-    @staticmethod
-    def get_holiday_info(year, month, day):
-        current_date = date(year, month, day)
-        is_weekend = (current_date.weekday() >= 5)
-        
-        tips = []
-        if is_weekend:
-            tips.append("周末固定休市")
-            
-        if year == 2026:
-            if month == 1 and day in [1, 2] and not is_weekend:
-                tips.append("元旦休市")
-            elif month == 2 and 16 <= day <= 20 and not is_weekend:
-                tips.append("春节休市")
-            elif month == 4 and day in [3, 6] and not is_weekend:
-                tips.append("清明节休市")
-            elif month == 5 and day in [1, 4, 5] and not is_weekend:
-                tips.append("劳动节休市")
-            elif month == 6 and day in [19, 22] and not is_weekend:
-                tips.append("端午节休市")
-            elif month == 9 and day in [25, 28] and not is_weekend:
-                tips.append("中秋节休市")
-            elif month == 10 and 1 <= day <= 7 and not is_weekend:
-                tips.append("国庆节休市")
-
-        is_closed = is_weekend or len(tips) > 0
-        tip_str = f"{year}年{month}月{day}日休市原因：\n" + "\n".join(tips) if tips else f"{year}年{month}月{day}日：正常交易日"
-        return str(day), tip_str, is_weekend, is_closed
-
-    def update_calendar_grid(self):
-        y_str = str(self.current_year)
-        m_str = str(self.current_month)
-        self.month_title.setText(y_str + "年 " + m_str + "月")
-        for i in reversed(range(self.days_layout.count())):
-            w = self.days_layout.itemAt(i).widget()
-            if w:
-                w.setParent(None)
-
-        cal = calendar.Calendar(firstweekday=6)
-        month_days = cal.monthdayscalendar(self.current_year, self.current_month)
-        
-        for r_idx, week in enumerate(month_days):
-            for c_idx, day in enumerate(week):
-                if day == 0:
-                    btn = QPushButton("")
-                    btn.setEnabled(False)
-                else:
-                    marker, tip, is_weekend, is_closed = CalendarDialog.get_holiday_info(self.current_year, self.current_month, day)
-                    btn = QPushButton(marker)
-                    btn.clicked.connect(lambda checked, t=tip: QMessageBox.information(self, "日期休市详情", t))
-                    
-                    if is_weekend:
-                        btn.setStyleSheet("background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; border-radius: 6px; font-weight: bold;")
-                    elif is_closed:
-                        btn.setStyleSheet("background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; border-radius: 6px; font-weight: bold;")
-                    else:
-                        btn.setStyleSheet("background-color: #34495e; color: #ffffff; border-radius: 6px;")
-
-                btn.setFixedHeight(50)
-                self.days_layout.addWidget(btn, r_idx, c_idx)
-
-
-class MarketClockWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.drag_position = QPoint()
         self.is_locked = False
+        self.is_quitting = False
         
-        self.settings = QSettings("MarketClockOrg", "MarketClockApp")
-        self.load_settings()
+        self.current_bg_color = "#1e222b"
+        self.current_time_color = "#38bdf8"
+        self.current_card_bg = "#262b36"
+        self.current_accent = "#0284c7"
+
+        self.silver_data = {
+            "contract": "AG2702",
+            "price": "12402.0",
+            "change": "-227.0",
+            "change_pct": "-1.80%",
+            "volume": "358210",
+            "open_interest": "184920"
+        }
 
         self.init_ui()
+        self.load_settings()
         self.init_tray()
-
-    def load_settings(self):
-        self.close_to_tray = self.settings.value("close_to_tray", True, type=bool)
-        self.is_on_top = self.settings.value("is_on_top", True, type=bool)
-        self.current_opacity = self.settings.value("opacity", 245, type=int)
-        
-        pos = self.settings.value("pos")
-        if pos:
-            self.move(pos)
-
-    def save_settings(self):
-        self.settings.setValue("pos", self.pos())
-        self.settings.setValue("close_to_tray", self.close_to_tray)
-        self.settings.setValue("is_on_top", self.is_on_top)
-        self.settings.setValue("opacity", self.current_opacity)
+        self.init_quote_thread()
 
     def init_ui(self):
-        flags = Qt.FramelessWindowHint
-        if self.is_on_top:
-            flags |= Qt.WindowStaysOnTopHint
-        self.setWindowFlags(flags)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.card = QWidget()
-        style = "QWidget { background-color: rgba(43, 48, 53, " + str(self.current_opacity) + "); border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); }"
-        self.card.setStyleSheet(style)
-        
-        card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(20, 15, 20, 15)
-        
+        self.setWindowOpacity(0.95)
+
+        self.container = QWidget(self)
+        self.container.setObjectName("MainContainer")
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setOffset(0, 5)
+        self.container.setGraphicsEffect(shadow)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.addWidget(self.container)
+
+        c_layout = QVBoxLayout(self.container)
+        c_layout.setContentsMargins(16, 12, 16, 16)
+        c_layout.setSpacing(10)
+
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(0, 0, 0, 0)
         
-        self.lock_btn = QPushButton("🔓")
-        self.lock_btn.setFixedSize(26, 26)
-        self.lock_btn.setToolTip("锁定窗口位置")
-        self.lock_btn.setStyleSheet("QPushButton { background: transparent; color: #ffffff; border: none; font-size: 14px; } QPushButton:hover { background: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.lock_btn = QPushButton("🔒")
+        self.lock_btn.setFixedSize(28, 28)
+        self.lock_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; font-size: 14px; }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }
+        """)
+        self.lock_btn.setToolTip("点击锁定/解锁窗口位置")
         self.lock_btn.clicked.connect(self.toggle_lock)
-        
-        self.setting_btn = QPushButton("⚙")
-        self.setting_btn.setFixedSize(26, 26)
-        self.setting_btn.setToolTip("设置")
-        self.setting_btn.setStyleSheet("QPushButton { background: transparent; color: #ffffff; border: none; font-size: 14px; } QPushButton:hover { background: rgba(255,255,255,0.1); border-radius: 4px; }")
-        self.setting_btn.clicked.connect(self.open_settings)
-        
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(26, 26)
-        close_btn.setToolTip("关闭")
-        close_btn.setStyleSheet("QPushButton { background: transparent; color: #ffffff; border: none; font-size: 14px; } QPushButton:hover { background: rgba(231,76,60,0.8); border-radius: 4px; }")
-        close_btn.clicked.connect(self.close)
-        
+
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setFixedSize(28, 28)
+        self.settings_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; font-size: 14px; color: #a1a1aa; }
+            QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }
+        """)
+        self.settings_btn.setToolTip("打开高级设置与皮肤切换")
+        self.settings_btn.clicked.connect(self.open_settings)
+
         top_bar.addWidget(self.lock_btn)
-        top_bar.addWidget(self.setting_btn)
+        top_bar.addWidget(self.settings_btn)
         top_bar.addStretch()
-        top_bar.addWidget(close_btn)
-        card_layout.addLayout(top_bar)
 
-        self.weekday_label = QLabel("星期一")
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(28, 28)
+        self.close_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; font-size: 14px; color: #a1a1aa; }
+            QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }
+        """)
+        self.close_btn.setToolTip("点击隐藏到系统托盘区")
+        self.close_btn.clicked.connect(self.hide)
+        top_bar.addWidget(self.close_btn)
+        c_layout.addLayout(top_bar)
+
+        self.weekday_label = QLabel("星期五")
         self.weekday_label.setAlignment(Qt.AlignCenter)
-        self.weekday_label.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: bold;")
-        card_layout.addWidget(self.weekday_label)
+        c_layout.addWidget(self.weekday_label)
 
-        self.time_label = QLabel("00:00:00")
+        self.time_label = QLabel("19:04:57")
         self.time_label.setAlignment(Qt.AlignCenter)
-        self.time_label.setStyleSheet("color: #ffffff; font-size: 44px; font-weight: 300;")
-        card_layout.addWidget(self.time_label)
+        c_layout.addWidget(self.time_label)
 
-        self.date_label = QLabel("2026年11月03日")
+        self.date_label = QLabel("2026年11月06日")
         self.date_label.setAlignment(Qt.AlignCenter)
-        self.date_label.setStyleSheet("color: #d0d0d0; font-size: 16px;")
-        card_layout.addWidget(self.date_label)
+        c_layout.addWidget(self.date_label)
 
-        # 股市状态栏与“查看休市日历”按钮放在同一行，完美填满右侧空位
-        footer_layout = QHBoxLayout()
-        self.market_status_label = QLabel("📈 股市: 检查中...")
-        self.market_status_label.setStyleSheet("color: #2ecc71; font-size: 12px; font-weight: bold;")
+        market_row = QHBoxLayout()
+        self.stock_status_label = QLabel("● 股市：已收盘")
+        self.stock_status_label.setStyleSheet("color: #94a3b8; font-size: 13px; font-weight: bold;")
         
-        self.holiday_btn = QPushButton("📅 查看休市日历")
-        self.holiday_btn.setMinimumWidth(140)
-        self.holiday_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.08); color: #e74c3c; font-size: 12px; font-weight: bold; border: 1px solid rgba(231, 76, 60, 0.3); border-radius: 6px; padding: 4px 8px; text-align: center; } QPushButton:hover { background-color: rgba(231, 76, 60, 0.2); color: #ffffff; }")
-        self.holiday_btn.clicked.connect(lambda: CalendarDialog(self).exec_())
+        self.cal_btn = QPushButton("📅 查看休市日历")
+        self.cal_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #262b36;
+                color: #f87171;
+                border: 1px solid rgba(248, 113, 113, 0.3);
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #333b4d;
+            }
+        """)
+        self.cal_btn.clicked.connect(self.show_calendar)
         
-        footer_layout.addWidget(self.market_status_label)
-        footer_layout.addStretch()
-        footer_layout.addWidget(self.holiday_btn)
-        card_layout.addLayout(footer_layout)
+        market_row.addWidget(self.stock_status_label)
+        market_row.addStretch()
+        market_row.addWidget(self.cal_btn)
+        c_layout.addLayout(market_row)
 
-        # 沪银行情看板：使用独立的容器 QWidget 作为背景壳，内部放 QLabel，在 PyInstaller 打包后 100% 绝对稳定！
-        self.quote_container = QWidget()
-        self.quote_layout = QHBoxLayout(self.quote_container)
-        self.quote_layout.setContentsMargins(8, 4, 8, 4)
-        
-        self.quote_label = QLabel("📈 沪银2702: 12402 ▼ -227 (-1.80%)")
-        self.quote_label.setAlignment(Qt.AlignCenter)
-        self.quote_layout.addWidget(self.quote_label)
-        
-        self.update_quote_style(-227)
-        card_layout.addWidget(self.quote_container)
+        self.silver_board = QLabel()
+        self.silver_board.setAlignment(Qt.AlignCenter)
+        self.update_silver_board_ui()
+        c_layout.addWidget(self.silver_board)
 
-        # 白银期货状态栏
-        self.silver_status_label = QLabel("⚪ 白银期货: 检查中...")
+        self.silver_status_label = QLabel("● 白银非交易时段 (距开盘 01:55:02)")
         self.silver_status_label.setAlignment(Qt.AlignCenter)
-        self.silver_status_label.setStyleSheet("color: #f39c12; font-size: 12px; font-weight: bold; margin-top: 4px;")
-        card_layout.addWidget(self.silver_status_label)
-        
-        main_layout.addWidget(self.card)
-        self.setLayout(main_layout)
+        c_layout.addWidget(self.silver_status_label)
+
+        self.next_holiday_label = QLabel("📌 下一休市：加载中...")
+        self.next_holiday_label.setAlignment(Qt.AlignCenter)
+        c_layout.addWidget(self.next_holiday_label)
+
+        self.apply_theme(self.current_bg_color, self.current_time_color, self.current_card_bg, self.current_accent)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_clock)
         self.timer.start(1000)
         self.update_clock()
-        self.resize(360, 310)
 
-    def update_quote_style(self, change_val):
-        """根据涨跌值动态调整行情看板容器颜色 (使用容器 QWidget 背景，打包后绝对不失效)"""
-        if change_val >= 0:
-            self.quote_container.setStyleSheet(
-                "background-color: #fdedec; border: 1px solid #f5b7b1; border-radius: 6px; margin-top: 4px;"
-            )
-            self.quote_label.setStyleSheet(
-                "color: #c0392b; font-size: 13px; font-weight: bold; background: transparent; border: none;"
-            )
-        else:
-            self.quote_container.setStyleSheet(
-                "background-color: #eafaf1; border: 1px solid #a9dfbf; border-radius: 6px; margin-top: 4px;"
-            )
-            self.quote_label.setStyleSheet(
-                "color: #27ae60; font-size: 13px; font-weight: bold; background: transparent; border: none;"
-            )
+        self.resize(340, 420)
+
+    def init_quote_thread(self):
+        self.quote_worker = SilverQuoteWorker()
+        self.quote_worker.data_fetched.connect(self.on_silver_data_updated)
+        self.quote_worker.start()
+
+    def on_silver_data_updated(self, info):
+        self.silver_data.update(info)
+        self.update_silver_board_ui()
+
+    def update_silver_board_ui(self):
+        d = self.silver_data
+        try:
+            chg_val = float(d['change'])
+        except Exception:
+            chg_val = 0.0
+        
+        color_hex = "#ef4444" if chg_val >= 0 else "#22c55e"
+        arrow = "▲" if chg_val >= 0 else "▼"
+
+        html_text = f"""
+        <div style="font-family: Consolas, monospace; line-height: 1.3; text-align: center;">
+            <div style="font-size: 13px; font-weight: bold; color: #94a3b8; margin-bottom: 2px;">沪银主力 AG2702</div>
+            <div style="font-size: 26px; font-weight: bold; color: #ffffff; letter-spacing: 0.5px;">{d['price']}</div>
+            <div style="font-size: 13px; font-weight: bold; color: {color_hex}; margin-top: 2px;">{arrow} {d['change']} ({d['change_pct']})</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 5px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 3px;">
+                成交量: {d['volume']} &nbsp;|&nbsp; 持仓量: {d['open_interest']}
+            </div>
+        </div>
+        """
+        self.silver_board.setText(html_text)
 
     def init_tray(self):
-        try:
-            icon = self.style().standardIcon(QStyle.SP_FileDialogInfoView)
-            self.tray_icon = QSystemTrayIcon(icon, self)
-            self.tray_icon.setToolTip("A股/白银市场监控时钟")
+        self.tray_icon = QSystemTrayIcon(self)
+        
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor("#38bdf8")))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(4, 4, 24, 24)
+        painter.end()
+        self.tray_icon.setIcon(QIcon(pixmap))
 
-            tray_menu = QMenu()
-            show_action = QAction("显示主界面", self)
-            show_action.triggered.connect(self.showNormal)
-            quit_action = QAction("完全退出", self)
-            quit_action.triggered.connect(QApplication.quit)
+        tray_menu = QMenu()
+        
+        show_action = QAction("显示主窗口", self)
+        show_action.triggered.connect(self.showNormal)
+        tray_menu.addAction(show_action)
 
-            tray_menu.addAction(show_action)
-            tray_menu.addSeparator()
-            tray_menu.addAction(quit_action)
+        settings_action = QAction("高级设置", self)
+        settings_action.triggered.connect(self.open_settings)
+        tray_menu.addAction(settings_action)
 
-            self.tray_icon.setContextMenu(tray_menu)
-            self.tray_icon.activated.connect(self.on_tray_activated)
-            self.tray_icon.show()
-        except Exception as e:
-            print("托盘初始化提示:", e)
+        tray_menu.addSeparator()
+
+        quit_action = QAction("退出程序", self)
+        quit_action.triggered.connect(self.real_quit)
+        tray_menu.addAction(quit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.setToolTip("桌面市场日历时钟 (运行中)")
+        self.tray_icon.activated.connect(self.on_tray_activated)
+        self.tray_icon.show()
 
     def on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:
+        if reason == QSystemTrayIcon.Trigger or reason == QSystemTrayIcon.DoubleClick:
             if self.isVisible():
                 self.hide()
             else:
                 self.showNormal()
                 self.raise_()
+                self.activateWindow()
 
     def closeEvent(self, event):
-        self.save_settings()
-        if self.close_to_tray:
+        if not self.is_quitting:
             event.ignore()
             self.hide()
+            self.tray_icon.showMessage(
+                "桌面市场时钟",
+                "程序已最小化到系统托盘区。点击右下角向上箭头可随时呼出，如需彻底退出请右键点击托盘图标选择“退出程序”。",
+                QSystemTrayIcon.Information,
+                3000
+            )
         else:
             event.accept()
+
+    def real_quit(self):
+        self.is_quitting = True
+        self.tray_icon.hide()
+        QApplication.quit()
+
+    def apply_theme(self, bg_color, time_color, card_bg, accent):
+        self.current_bg_color = bg_color
+        self.current_time_color = time_color
+        self.current_card_bg = card_bg
+        self.current_accent = accent
+
+        self.container.setStyleSheet(f"""
+            QWidget#MainContainer {{
+                background-color: {bg_color};
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+            }}
+        """)
+
+        self.weekday_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {card_bg};
+                color: #e2e8f0;
+                font-size: 20px;
+                font-weight: bold;
+                border-radius: 8px;
+                padding: 6px;
+                border: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
+
+        self.time_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {card_bg};
+                color: {time_color};
+                font-size: 32px;
+                font-weight: bold;
+                font-family: Consolas, monospace;
+                border-radius: 8px;
+                padding: 8px;
+                border: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
+
+        self.date_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {card_bg};
+                color: #94a3b8;
+                font-size: 14px;
+                border-radius: 8px;
+                padding: 6px;
+                border: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
+
+        self.silver_board.setStyleSheet(f"""
+            QLabel {{
+                background-color: {card_bg};
+                border-radius: 8px;
+                padding: 8px;
+                border: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
+
+        self.silver_status_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {card_bg};
+                color: #94a3b8;
+                font-size: 13px;
+                border-radius: 8px;
+                padding: 6px;
+                border: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
+
+        self.next_holiday_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {card_bg};
+                color: #38bdf8;
+                font-size: 13px;
+                font-weight: bold;
+                border-radius: 8px;
+                padding: 6px;
+                border: 1px solid rgba(56, 189, 248, 0.2);
+            }}
+        """)
 
     def toggle_lock(self):
         self.is_locked = not self.is_locked
         if self.is_locked:
             self.lock_btn.setText("🔒")
-            self.lock_btn.setToolTip("已锁定窗口位置（点击解锁）")
+            self.lock_btn.setToolTip("窗口已锁定（无法拖动）")
         else:
             self.lock_btn.setText("🔓")
-            self.lock_btn.setToolTip("锁定窗口位置")
+            self.lock_btn.setToolTip("窗口已解锁（可拖动）")
+        self.save_settings()
 
     def open_settings(self):
         dlg = SettingsDialog(self)
         dlg.exec_()
 
+    def show_calendar(self):
+        dialog = MarketCalendarDialog(self)
+        dialog.exec_()
+
     def update_clock(self):
-        now = datetime.now()
-        weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
-        self.weekday_label.setText(weekdays[now.weekday()])
+        now = datetime.datetime.now()
+        week_days = ['星期一','星期二','星期三','星期四','星期五','星期六','星期日']
+        
+        self.weekday_label.setText(week_days[now.weekday()])
         self.time_label.setText(now.strftime("%H:%M:%S"))
         self.date_label.setText(now.strftime("%Y年%m月%d日"))
-        
-        t_str = now.strftime("%H:%M")
-        full_t_str = now.strftime("%H:%M:%S")
-        _, tip_str, is_weekend, is_closed = CalendarDialog.get_holiday_info(now.year, now.month, now.day)
 
-        is_trading_time = False
-        if not is_closed:
-            if ("09:30:00" <= full_t_str <= "11:30:00") or ("13:00:00" <= full_t_str <= "15:00:00"):
-                is_trading_time = True
+        self.update_next_holiday(now)
 
-        if is_closed:
-            self.market_status_label.setText("🔴 股市: 今日休市")
-            self.market_status_label.setStyleSheet("color: #e74c3c;")
-        elif is_trading_time:
-            if full_t_str <= "11:30:00":
-                close_t = datetime.combine(now.date(), time(11, 30, 0))
-                diff = close_t - now
-                secs = int(diff.total_seconds())
-                if secs > 0:
-                    h, rem = divmod(secs, 3600)
-                    m, s = divmod(rem, 60)
-                    self.market_status_label.setText(f"🟢 距上午收盘 {h:02d}:{m:02d}:{s:02d}")
-                else:
-                    self.market_status_label.setText("🟢 股市: 交易中")
-            elif "13:00:00" <= full_t_str <= "15:00:00":
-                close_t = datetime.combine(now.date(), time(15, 0, 0))
-                diff = close_t - now
-                secs = int(diff.total_seconds())
-                if secs > 0:
-                    h, rem = divmod(secs, 3600)
-                    m, s = divmod(rem, 60)
-                    self.market_status_label.setText(f"🟢 距下午收盘 {h:02d}:{m:02d}:{s:02d}")
-                else:
-                    self.market_status_label.setText("🟢 15:00 正式收盘")
-            else:
-                self.market_status_label.setText("🟢 股市: 交易中")
-            self.market_status_label.setStyleSheet("color: #2ecc71;")
-        else:
-            if "09:15:00" <= full_t_str < "09:25:00":
-                self.market_status_label.setText("🟡 股市: 集合竞价中")
-                self.market_status_label.setStyleSheet("color: #f1c40f;")
-            elif "09:25:00" <= full_t_str < "09:30:00":
-                self.market_status_label.setText("🟡 股市: 等待开盘")
-                self.market_status_label.setStyleSheet("color: #f39c12;")
-            elif full_t_str < "09:15:00":
-                self.market_status_label.setText("⚪ 股市: 未开盘")
-                self.market_status_label.setStyleSheet("color: #95a5a6;")
-            elif "11:30:00" < full_t_str < "13:00:00":
-                self.market_status_label.setText("🟡 股市: 午休中")
-                self.market_status_label.setStyleSheet("color: #f1c40f;")
-            else:
-                self.market_status_label.setText("⚪ 股市: 已收盘")
-                self.market_status_label.setStyleSheet("color: #95a5a6;")
+        date_key = now.strftime("%Y-%m-%d")
+        holiday_info = HOLIDAY_SCHEDULE.get(date_key, None)
 
-        # 白银期货（沪银）实时状态判定及开盘倒计时计算
-        weekday = now.weekday()
-        is_weekend_silver = (weekday >= 5)
-        is_early_mon = (weekday == 0 and "02:30:00" < full_t_str < "09:00:00")
-        
-        if is_weekend_silver or is_early_mon:
-            if weekday == 5 or weekday == 6:
-                days_to_mon = (0 - weekday) % 7
-                if days_to_mon == 0:
-                    days_to_mon = 7
-                next_open = datetime.combine(now.date() + timedelta(days=days_to_mon), time(21, 0, 0))
-            elif is_early_mon:
-                next_open = datetime.combine(now.date(), time(9, 0, 0))
-            else:
-                next_open = datetime.combine(now.date(), time(21, 0, 0))
+        if holiday_info:
+            types = holiday_info.get("types", []) if isinstance(holiday_info, dict) else holiday_info
+            reason = holiday_info.get("reason", "休市") if isinstance(holiday_info, dict) else "休市"
             
-            diff = next_open - now
-            secs = int(diff.total_seconds())
-            if secs > 0:
-                d, rem = divmod(secs, 86400)
-                h, rem = divmod(rem, 3600)
-                m, s = divmod(rem, 60)
-                if d > 0:
-                    countdown_str = f"距开盘: {d}天 {h:02d}:{m:02d}:{s:02d}"
-                else:
-                    countdown_str = f"距开盘: {h:02d}:{m:02d}:{s:02d}"
+            if "A" in types:
+                self.stock_status_label.setText(f"● 股市：{reason}")
             else:
-                countdown_str = "即将开盘"
+                self.stock_status_label.setText("● 股市：交易中")
 
-            if weekday == 5 or weekday == 6:
-                self.silver_status_label.setText(f"⚪ 白银期货: 周末休市 ({countdown_str})")
+            if "AG" in types:
+                self.silver_status_label.setText(f"● 白银：{reason}")
             else:
-                self.silver_status_label.setText(f"⚪ 白银期货: 非交易时段 ({countdown_str})")
-            self.silver_status_label.setStyleSheet("color: #95a5a6;")
+                self.update_silver_countdown(now)
+        elif now.weekday() >= 5:
+            self.stock_status_label.setText("● 股市：周末休市")
+            self.silver_status_label.setText("● 白银：周末休市 (非交易日)")
         else:
-            if "08:55:00" <= full_t_str < "09:00:00":
-                self.silver_status_label.setText("🟡 白银日盘: 集合竞价中")
-                self.silver_status_label.setStyleSheet("color: #f1c40f;")
-            elif ("09:00:00" <= full_t_str <= "10:15:00") or ("10:30:00" <= full_t_str <= "11:30:00") or ("13:30:00" <= full_t_str <= "15:00:00"):
-                self.silver_status_label.setText("🟢 白银日盘: 交易中")
-                self.silver_status_label.setStyleSheet("color: #2ecc71;")
-            elif ("10:15:00" < full_t_str < "10:30:00") or ("11:30:00" < full_t_str < "13:30:00"):
-                if full_t_str < "10:30:00":
-                    next_open = datetime.combine(now.date(), time(10, 30, 0))
-                elif full_t_str < "13:30:00":
-                    next_open = datetime.combine(now.date(), time(13, 30, 0))
-                else:
-                    next_open = datetime.combine(now.date(), time(21, 0, 0))
-                
-                diff = next_open - now
-                secs = int(diff.total_seconds())
-                h, rem = divmod(secs, 3600)
-                m, s = divmod(rem, 60)
-                self.silver_status_label.setText(f"🟡 白银盘中休市 (距开盘 {h:02d}:{m:02d}:{s:02d})")
-                self.silver_status_label.setStyleSheet("color: #f1c40f;")
-            elif "20:55:00" <= full_t_str < "21:00:00":
-                self.silver_status_label.setText("🟡 白银夜盘: 集合竞价中 ⚠️ 注意风控")
-                self.silver_status_label.setStyleSheet("color: #e67e22;")
-            elif ("21:00:00" <= full_t_str) or (full_t_str <= "02:30:00"):
-                self.silver_status_label.setText("🌙 🟢 白银夜盘: 正在火热交易中")
-                self.silver_status_label.setStyleSheet("color: #00e676;")
+            t = now.time()
+            if datetime.time(9, 30) <= t <= datetime.time(15, 0):
+                self.stock_status_label.setText("● 股市：交易中")
             else:
-                if full_t_str < "08:55:00":
-                    next_open = datetime.combine(now.date(), time(9, 0, 0))
+                self.stock_status_label.setText("● 股市：已收盘")
+            
+            self.update_silver_countdown(now)
+
+    def update_silver_countdown(self, now):
+        current_time = now.time()
+        
+        t_night_open = datetime.time(21, 0, 0)
+        t_morning_open = datetime.time(9, 0, 0)
+
+        is_trading = False
+        if (datetime.time(9, 0) <= current_time <= datetime.time(11, 30)) or            (datetime.time(13, 30) <= current_time <= datetime.time(15, 0)) or            (datetime.time(21, 0) <= current_time) or            (current_time <= datetime.time(2, 30)):
+            is_trading = True
+
+        if is_trading:
+            self.silver_status_label.setText("● 白银期货：交易中 (Live)")
+        else:
+            next_open = datetime.datetime.combine(now.date(), t_morning_open)
+            if current_time > datetime.time(15, 0) and current_time < datetime.time(21, 0):
+                next_open = datetime.datetime.combine(now.date(), t_night_open)
+            elif current_time >= datetime.time(2, 30) and current_time < datetime.time(9, 0):
+                next_open = datetime.datetime.combine(now.date(), t_morning_open)
+            elif current_time > datetime.time(11, 30) and current_time < datetime.time(13, 30):
+                next_open = datetime.datetime.combine(now.date(), datetime.time(13, 30))
+            else:
+                if current_time >= datetime.time(21, 0):
+                    next_open = datetime.datetime.combine(now.date() + datetime.timedelta(days=1), t_morning_open)
                 else:
-                    next_open = datetime.combine(now.date(), time(21, 0, 0))
-                
-                diff = next_open - now
-                secs = int(diff.total_seconds())
-                h, rem = divmod(secs, 3600)
-                m, s = divmod(rem, 60)
-                self.silver_status_label.setText(f"⚪ 白银非交易时段 (距开盘 {h:02d}:{m:02d}:{s:02d})")
-                self.silver_status_label.setStyleSheet("color: #95a5a6;")
+                    next_open = datetime.datetime.combine(now.date(), t_morning_open)
+
+            diff = next_open - now
+            if diff.total_seconds() > 0:
+                hours = int(diff.total_seconds() // 3600)
+                minutes = int((diff.total_seconds() % 3600) // 60)
+                seconds = int(diff.total_seconds() % 60)
+                self.silver_status_label.setText(f"● 白银非交易时段 (距开盘 {hours:02d}:{minutes:02d}:{seconds:02d})")
+            else:
+                self.silver_status_label.setText("● 白银即将开盘...")
+
+    def update_next_holiday(self, now):
+        today_date = now.date()
+        next_date_str = None
+        next_reason = None
+        days_diff = 9999
+
+        sorted_dates = sorted(HOLIDAY_SCHEDULE.keys())
+        for d_str in sorted_dates:
+            d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
+            if d_obj >= today_date:
+                info = HOLIDAY_SCHEDULE[d_str]
+                types = info.get("types", []) if isinstance(info, dict) else info
+                if "A" in types or "AG" in types:
+                    diff = (d_obj - today_date).days
+                    next_date_str = d_str
+                    next_reason = info.get("reason", "休_市") if isinstance(info, dict) else "休市"
+                    days_diff = diff
+                    break
+
+        if next_date_str:
+            clean_reason = next_reason.replace("休市", "").replace("假期", "").strip()
+            if not clean_reason:
+                clean_reason = "节假日"
+            self.next_holiday_label.setText(f"📌 下一休市：{clean_reason} ({days_diff}天)")
+        else:
+            self.next_holiday_label.setText("📌 下一休市：暂无近期安排")
 
     def mousePressEvent(self, event):
-        if not self.is_locked and event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and not self.is_locked:
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if not self.is_locked and event.buttons() == Qt.LeftButton:
+        if event.buttons() == Qt.LeftButton and not self.is_locked:
             self.move(event.globalPos() - self.drag_position)
-            self.save_settings()
             event.accept()
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    
-    # 保证全局单例运行：若已有实例 in 运行则直接退出或提示
-    shared_memory = QSharedMemory("MarketClockUniqueInstanceKey")
-    if not shared_memory.create(1):
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("提示")
-        msg.setText("市场时钟程序已经在运行中啦！\n请检查任务栏右下角托盘或桌面窗口。")
-        msg.exec_()
-        sys.exit(0)
-
     try:
+        print("Starting app...")
+        app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False)
-        clock = MarketClockWidget()
-        clock.show()
+        print("Initializing window...")
+        window = ClockWindow()
+        print("Showing window...")
+        window.show()
+        print("Entering event loop...")
         sys.exit(app.exec_())
     except Exception as e:
-        error_msg = traceback.format_exc()
-        print(error_msg)
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Critical)
-        msg.setWindowTitle("程序运行出错")
-        msg.setText("程序发生异常崩溃：")
-        msg.setDetailedText(error_msg)
-        msg.exec_()
+        traceback.print_exc()
+        input("Press Enter to exit...")
