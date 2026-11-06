@@ -1,2 +1,2 @@
-python clock_app.py
+python create.py
 pause
