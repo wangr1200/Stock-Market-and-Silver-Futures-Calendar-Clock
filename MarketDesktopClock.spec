@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['clock_app.py'],
+    ['create.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='clock_app',
+    name='MarketDesktopClock',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
