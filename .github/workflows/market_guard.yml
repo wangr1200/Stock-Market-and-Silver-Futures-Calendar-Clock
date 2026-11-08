@@ -23,6 +23,9 @@ jobs:
           pip install requests akshare pandas
 
       - name: 4. 运行云端盯盘与复盘脚本
+        env:
+          # 关键：将你在 GitHub Secrets 里面配的机密传递给脚本
+          SERVER_CHAN_KEY: ${{ secrets.SERVER_CHAN_KEY }}
         run: |
           python wx_bot_monitor.py
 

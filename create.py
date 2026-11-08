@@ -9,7 +9,6 @@ import random
 import json
 import winreg
 import subprocess
-import shutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, 
                              QHBoxLayout, QGraphicsDropShadowEffect, QPushButton, 
                              QDialog, QCalendarWidget, QSlider, QCheckBox, 
@@ -19,25 +18,8 @@ from PyQt5.QtCore import Qt, QTimer, QPoint, QDate, QRect, QRectF, pyqtSignal, Q
 from PyQt5.QtGui import QColor, QBrush, QDesktopServices, QPainter, QIcon, QPixmap, QPen, QPolygon
 from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QCloseEvent
-from sync_alerts import sync_to_cloud
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
-
-def get_server_key():
-    # 安全获取 Server酱 Key: 优先从环境变量读取，其次从 config.json 读取
-    key = os.getenv("SERVER_CHAN_KEY")
-    if key:
-        return key.strip()
-    try:
-        config_file = os.path.join(CACHE_DIR, "config.json")
-        if os.path.exists(config_file):
-            with open(config_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data.get("server_chan_key", "").strip()
-    except Exception:
-        pass
-    return ""
-
 
 # ===== 全局配置中心 (Configuration Center) =====
 DEFAULT_AG_CONTRACT = "AG2702"
@@ -126,17 +108,13 @@ def check_is_market_open(now=None, market_type="AG"):
             return False
 
     if market_type == "AG":
-        if (datetime.time(9, 0) <= t <= datetime.time(11, 30)) or \
-           (datetime.time(13, 30) <= t <= datetime.time(15, 0)) or \
-           (t >= datetime.time(21, 0) or t <= datetime.time(2, 30)):
+        if (datetime.time(9, 0) <= t <= datetime.time(11, 30)) or            (datetime.time(13, 30) <= t <= datetime.time(15, 0)) or            (t >= datetime.time(21, 0) or t <= datetime.time(2, 30)):
             return True
     elif market_type == "A":
-        if (datetime.time(9, 30) <= t <= datetime.time(11, 30)) or \
-           (datetime.time(13, 0) <= t <= datetime.time(15, 0)):
+        if (datetime.time(9, 30) <= t <= datetime.time(11, 30)) or            (datetime.time(13, 0) <= t <= datetime.time(15, 0)):
             return True
     elif market_type == "HK":
-        if (datetime.time(9, 30) <= t <= datetime.time(12, 0)) or \
-           (datetime.time(13, 0) <= t <= datetime.time(16, 0)):
+        if (datetime.time(9, 30) <= t <= datetime.time(12, 0)) or            (datetime.time(13, 0) <= t <= datetime.time(16, 0)):
             return True
         
     return False
@@ -635,18 +613,87 @@ class PriceAlertDialog(QDialog):
                 log_error(e, f"PriceAlert Delete")
 
     def sync_alerts_to_cloud(self):
-        """一键将本地的 price_alerts.json 推送到 GitHub，并发送微信通知（已统一复用 sync_alerts.py）"""
+        """一键将本地的 price_alerts.json 推送到 GitHub，并发送微信通知"""
         try:
-            success, msg = sync_to_cloud()
-            
-            if success:
-                dlg = SilentTipDialog(
-                    "☁️ 云端同步与微信提醒成功", 
-                    "最新的价格预警配置已成功处理，并已通过微信发送了同步通知！", 
-                    self
-                )
-            else:
-                dlg = SilentTipDialog("❌ 同步提示", f"同步过程提示：\n{msg}", self)
+            filepath = self.get_alerts_filepath()
+            if not os.path.exists(filepath):
+                return
+
+            # 读取当前最新的预警内容，以便打包发到微信
+            with open(filepath, "r", encoding="utf-8") as f:
+                alerts = json.load(f)
+
+            # 获取正确的 Git 仓库根目录（优先使用程序运行目录或当前工作目录）
+            repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            if not os.path.exists(os.path.join(repo_dir, ".git")):
+                repo_dir = os.getcwd()
+            if not os.path.exists(os.path.join(repo_dir, ".git")):
+                # 向上递归查找 .git
+                p = repo_dir
+                for _ in range(5):
+                    if os.path.exists(os.path.join(p, ".git")):
+                        repo_dir = p
+                        break
+                    parent = os.path.dirname(p)
+                    if parent == p:
+                        break
+                    p = parent
+
+            git_dir = os.path.join(repo_dir, ".git")
+            if os.path.exists(git_dir):
+                repo_json_path = os.path.join(repo_dir, "price_alerts.json")
+                try:
+                    shutil.copy(filepath, repo_json_path)
+                    # 即使 git 命令因为没有配置 commit 用户或网络问题失败，也捕获异常，绝不弹窗报错阻断微信通知
+                    res_add = subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True)
+                    if res_add.returncode == 0:
+                        subprocess.run(["git", "commit", "-m", "auto sync price_alerts.json from local GUI"], cwd=repo_dir, capture_output=True, text=True)
+                        subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True)
+                except Exception as g_err:
+                    log_error(g_err, "GitSync")
+
+            # 组装微信通知内容
+            alerts_summary = ""
+            for idx, a in enumerate(alerts):
+                c_name = a.get("contract", "")
+                c_type = "涨到 (≥)" if a.get("type") == "up" else "跌到 (≤)"
+                c_target = a.get("target", 0.0)
+                status = "监控中" if a.get("active", True) else "已触发"
+                alerts_summary += f"- {idx+1}. **{c_name}** | {c_type} **{c_target}** | {status}\n"
+
+            if not alerts_summary:
+                alerts_summary = "暂无活跃预警"
+
+            # 发送 Server酱 微信推送
+            # 安全建议：通过环境变量 SERVER_CHAN_KEY 或 config.json 读取
+            server_key = os.getenv("SERVER_CHAN_KEY", "")
+            if not server_key:
+                try:
+                    config_file = os.path.join(CACHE_DIR, "config.json")
+                    if os.path.exists(config_file):
+                        with open(config_file, "r", encoding="utf-8") as f:
+                            cfg = json.load(f)
+                            server_key = cfg.get("server_chan_key", "")
+                except Exception:
+                    pass
+            url = f"https://sctapi.ftqq.com/{server_key}.send" if server_key else ""
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            title = "☁️【桌面时钟】预警配置已同步更新"
+            desp = (
+                f"### 📥 本地新预警已成功同步！\n"
+                f"- **同步时间**：{now_str}\n"
+                f"- **当前预警总数**：{len(alerts)} 条\n\n"
+                f"**当前所有预警列表**：\n{alerts_summary}\n"
+                f"> 💡 云端监控进程将在下一轮（60秒内）自动应用最新规则。"
+            )
+            if server_key:
+                requests.post(url, data={"title": title, "desp": desp}, timeout=5)
+
+            dlg = SilentTipDialog(
+                "☁️ 云端同步与微信提醒成功", 
+                "最新的价格预警配置已成功处理，并已通过微信发送了同步通知！", 
+                self
+            )
             dlg.exec_()
         except Exception as e:
             dlg = SilentTipDialog("❌ 同步失败", f"推送或发送微信通知失败：\n{e}", self)
@@ -2747,14 +2794,14 @@ class ClockWindow(QWidget):
                     <td align="right" style="font-size: 11px; font-weight: bold; color: #38bdf8; padding: 2px 4px;">{time_str}</td>
                 </tr>'''
 
-            html_text = f"""
+            html_text = f'''
             <table width="100%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 8px; padding: 4px;">
                 <tr>
                     <td colspan="2" style="font-size: 11px; font-weight: bold; color: #facc15; padding: 2px 4px 4px 4px; border-bottom: 1px solid rgba(255,255,255,0.08);">⚡ 核心宏观大事件倒计时看板</td>
                 </tr>
                 {rows_html}
             </table>
-            """
+            '''
             self.macro_board.setText(html_text)
         else:
             self.macro_board.setText("⚡ 宏观事件：暂无近期安排")
