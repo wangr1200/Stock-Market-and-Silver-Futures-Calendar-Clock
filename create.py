@@ -8,6 +8,7 @@ import traceback
 import random
 import json
 import winreg
+import subprocess
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, 
                              QHBoxLayout, QGraphicsDropShadowEffect, QPushButton, 
                              QDialog, QCalendarWidget, QSlider, QCheckBox, 
@@ -516,7 +517,17 @@ class PriceAlertDialog(QDialog):
         close_btn.setStyleSheet("background-color: #334155; color: white; border-radius: 4px; padding: 5px 12px;")
         close_btn.clicked.connect(self.accept)
 
+        sync_cloud_btn = QPushButton("☁️ 同步到云端")
+        sync_cloud_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #059669; color: white; border-radius: 4px; padding: 5px 12px; font-weight: bold; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #10b981; }
+        """)
+        sync_cloud_btn.clicked.connect(self.sync_alerts_to_cloud)
+
         bot_row.addWidget(del_btn)
+        bot_row.addWidget(sync_cloud_btn)
         bot_row.addStretch()
         bot_row.addWidget(close_btn)
         layout.addLayout(bot_row)
@@ -600,6 +611,58 @@ class PriceAlertDialog(QDialog):
                     self.load_alerts()
             except Exception as e:
                 log_error(e, f"PriceAlert Delete")
+
+    def sync_alerts_to_cloud(self):
+        """一键将本地的 price_alerts.json 推送到 GitHub，并发送微信通知"""
+        try:
+            filepath = self.get_alerts_filepath()
+            if not os.path.exists(filepath):
+                return
+
+            # 读取当前最新的预警内容，以便打包发到微信
+            with open(filepath, "r", encoding="utf-8") as f:
+                alerts = json.load(f)
+
+            # 自动执行 Git 提交并推送配置文件
+            subprocess.run(["git", "add", "price_alerts.json"], check=True)
+            subprocess.run(["git", "commit", "-m", "auto sync price_alerts.json from local GUI"], check=True)
+            subprocess.run(["git", "push", "origin", "main"], check=True)
+
+            # 组装微信通知内容
+            alerts_summary = ""
+            for idx, a in enumerate(alerts):
+                c_name = a.get("contract", "")
+                c_type = "涨到 (≥)" if a.get("type") == "up" else "跌到 (≤)"
+                c_target = a.get("target", 0.0)
+                status = "监控中" if a.get("active", True) else "已触发"
+                alerts_summary += f"- {idx+1}. **{c_name}** | {c_type} **{c_target}** | {status}\n"
+
+            if not alerts_summary:
+                alerts_summary = "暂无活跃预警"
+
+            # 发送 Server酱 微信推送
+            server_key = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
+            url = f"https://sctapi.ftqq.com/{server_key}.send"
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            title = "☁️【桌面时钟】预警配置已同步更新"
+            desp = (
+                f"### 📥 本地新预警已成功同步至云端！\n"
+                f"- **同步时间**：{now_str}\n"
+                f"- **当前预警总数**：{len(alerts)} 条\n\n"
+                f"**当前所有预警列表**：\n{alerts_summary}\n"
+                f"> 💡 云端监控进程将在下一轮（60秒内）自动应用最新规则。"
+            )
+            requests.post(url, data={"title": title, "desp": desp}, timeout=5)
+
+            dlg = SilentTipDialog(
+                "☁️ 云端同步与微信提醒成功", 
+                "最新的价格预警配置已成功上传至 GitHub，并已通过微信发送了同步通知！\n云端监控脚本会在下一轮检查时（最多60秒内）自动应用新预警。", 
+                self
+            )
+            dlg.exec_()
+        except Exception as e:
+            dlg = SilentTipDialog("❌ 同步失败", f"推送至 GitHub 或发送微信通知失败：\n{e}", self)
+            dlg.exec_()
 
 
 class CustomCalendarWidget(QCalendarWidget):
