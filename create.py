@@ -21,6 +21,22 @@ from PyQt5.QtGui import QCloseEvent
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
 
+def get_server_key():
+    # 安全获取 Server酱 Key: 优先从环境变量读取，其次从 config.json 读取
+    key = os.getenv("SERVER_CHAN_KEY")
+    if key:
+        return key.strip()
+    try:
+        config_file = os.path.join(CACHE_DIR, "config.json")
+        if os.path.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("server_chan_key", "").strip()
+    except Exception:
+        pass
+    return ""
+
+
 # ===== 全局配置中心 (Configuration Center) =====
 DEFAULT_AG_CONTRACT = "AG2702"
 DEFAULT_AU_CONTRACT = "AU2702"
@@ -666,7 +682,7 @@ class PriceAlertDialog(QDialog):
 
             # 发送 Server酱 微信推送
             # 安全建议：通过环境变量 SERVER_CHAN_KEY 或 config.json 读取
-            server_key = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
+            server_key = get_server_key()
             url = f"https://sctapi.ftqq.com/{server_key}.send" if server_key else ""
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             title = "☁️【桌面时钟】预警配置已同步更新"

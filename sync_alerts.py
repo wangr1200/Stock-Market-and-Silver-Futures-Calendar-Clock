@@ -6,6 +6,23 @@ import json
 import requests
 import datetime
 
+
+def get_server_key():
+    # 安全获取 Server酱 Key: 优先从环境变量读取，其次从 config.json 读取
+    CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
+    key = os.getenv("SERVER_CHAN_KEY")
+    if key:
+        return key.strip()
+    try:
+        config_file = os.path.join(CACHE_DIR, "config.json")
+        if os.path.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("server_chan_key", "").strip()
+    except Exception:
+        pass
+    return ""
+
 def sync_to_cloud():
     """统一的本地预警配置同步到 Git 云端与微信推送函数"""
     CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
@@ -58,7 +75,7 @@ def sync_to_cloud():
         if not alerts_summary:
             alerts_summary = "暂无活跃预警"
 
-        server_key = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
+        server_key = get_server_key()
         url = f"https://sctapi.ftqq.com/{server_key}.send" if server_key else ""
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         title = "☁️【桌面时钟】预警配置已同步更新"

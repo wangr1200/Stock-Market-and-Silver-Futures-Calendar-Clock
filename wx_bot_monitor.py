@@ -6,11 +6,28 @@ import sys
 import akshare as ak
 
 # ================= 1. 配置区域 =================
-SERVER_CHAN_KEY = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
+SERVER_CHAN_KEY = get_server_key()
 CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
 ALERTS_FILE = os.path.join(CACHE_DIR, "price_alerts.json")
+
+
+def get_server_key():
+    # 安全获取 Server酱 Key: 优先从环境变量读取，其次从 config.json 读取
+    CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
+    key = os.getenv("SERVER_CHAN_KEY")
+    if key:
+        return key.strip()
+    try:
+        config_file = os.path.join(CACHE_DIR, "config.json")
+        if os.path.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("server_chan_key", "").strip()
+    except Exception:
+        pass
+    return ""
 
 def load_alerts():
     if os.path.exists(ALERTS_FILE):
@@ -30,7 +47,8 @@ def save_alerts(alerts):
         print(f"[{time.strftime('%H:%M:%S')}] 保存预警文件失败: {e}")
 
 def send_wechat_notification(title, desp):
-    url = f"https://sctapi.ftqq.com/{SERVER_CHAN_KEY}.send"
+    key = SERVER_CHAN_KEY or get_server_key()
+    url = f"https://sctapi.ftqq.com/{key}.send" if key else ""
     data = {
         "title": title,
         "desp": desp
