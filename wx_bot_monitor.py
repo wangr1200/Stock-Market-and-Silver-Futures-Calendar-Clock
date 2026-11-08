@@ -1,20 +1,14 @@
 import time
+import json
+import os
+import subprocess
 import requests
 import akshare as ak
 
 # ================= 1. 配置区域 =================
 SERVER_CHAN_KEY = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
 CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
-
-# ----------------- 2. 目标价格预警规则表 -----------------
-TARGET_ALERTS = [
-    {
-        "name": "沪银主力 (AG0)",
-        "condition": ">=",             # '>=' 表示价格涨到或超过，'<=' 表示跌到或低于
-        "target_price": 12523.0,       # 你设置的目标价格
-        "triggered": False             # 触发状态标识
-    },
-]
+ALERTS_FILE = "price_alerts.json"  # 预警配置文件
 # ============================================
 
 def send_wechat_notification(title, desp):
@@ -33,58 +27,71 @@ def send_wechat_notification(title, desp):
     except Exception as e:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [异常] 发送微信消息失败: {e}")
 
-def check_market_data():
-    """检查行情并精准获取沪银实时价格"""
+def load_dynamic_alerts():
+    """每次检查前自动执行 git pull 并加载最新的预警配置"""
     try:
-        # 直接获取白银品种实时行情
-        df = ak.futures_zh_spot(symbol="AG0", market="SHFE")
-        if df is None or df.empty:
-            # 备用方案：获取上期所实时数据并在其中查找 AG
-            df = ak.futures_zh_realtime(market="SHFE")
+        # 1. 自动从 GitHub 拉取最新配置文件，确保云端拿到本地最新同步的内容
+        subprocess.run(["git", "pull", "--quiet"], check=False)
+    except Exception:
+        pass
 
+    alerts = []
+    if os.path.exists(ALERTS_FILE):
+        try:
+            with open(ALERTS_FILE, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+                # 转换格式适配云端监控逻辑
+                for item in raw_data:
+                    if item.get("active", True):  # 只监控激活状态的
+                        alerts.append({
+                            "name": f"沪银主力 ({item.get('contract', 'AG0')})",
+                            "condition": ">=" if item.get('type') == "up" else "<=",
+                            "target_price": float(item.get('target', 0.0)),
+                            "triggered": False
+                        })
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] [警告] 读取预警配置出错: {e}")
+    return alerts
+
+def check_market_data():
+    """检查行情并比对动态加载的预警规则"""
+    try:
+        # 每次轮询前自动同步并加载最新预警
+        current_alerts = load_dynamic_alerts()
+
+        # 使用新浪期货主力合约接口获取行情
+        df = ak.futures_main_sina()
         if df is None or df.empty:
-            print(f"[{time.strftime('%H:%M:%S')}] 未能获取到行情数据...")
+            print(f"[{time.strftime('%H:%M:%S')}] 未能获取到新浪主力行情数据...")
             return
 
         current_price = 0.0
         contract_desc = "沪银主力 (AG0)"
 
-        # 遍历查找白银
         for _, row in df.iterrows():
-            row_str = str(row.values).upper()
-            if 'AG' in row_str or '沪银' in row_str:
-                # 尝试提取价格字段（兼容不同接口的列名）
+            symbol = str(row.get('symbol', '')).upper()
+            name = str(row.get('name', ''))
+            
+            if 'AG' in symbol or '银' in name:
                 for col in ['trade', 'price', '最新价', '现价']:
-                    if col in row and pd_notnull(row[col]):
-                        try:
-                            val = float(row[col])
-                            if val > 0:
-                                current_price = val
-                                break
-                        except:
-                            pass
+                    if col in row:
+                        val = row[col]
+                        if val is not None and str(val) != 'nan':
+                            try:
+                                f_val = float(val)
+                                if f_val > 0:
+                                    current_price = f_val
+                                    contract_desc = f"{name} ({symbol})"
+                                    break
+                            except:
+                                pass
                 if current_price > 0:
                     break
 
-        # 如果上面没抓到，尝试用新浪主力表格直接按行匹配
-        if current_price == 0:
-            df_main = ak.futures_main_sina()
-            if df_main is not None and not df_main.empty:
-                for _, row in df_main.iterrows():
-                    symbol = str(row.get('symbol', '')).upper()
-                    name = str(row.get('name', ''))
-                    if 'AG' in symbol or '银' in name:
-                        current_price = float(row.get('trade', row.get('price', 0)))
-                        contract_desc = f"{name} ({symbol})"
-                        break
-
         if current_price > 0:
-            print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_desc} | 当前最新价: {current_price}")
+            print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_desc} | 当前最新价: {current_price} | 当前激活预警数: {len(current_alerts)}")
 
-            for alert in TARGET_ALERTS:
-                if alert["triggered"]:
-                    continue
-                
+            for alert in current_alerts:
                 target_p = alert["target_price"]
                 cond = alert["condition"]
                 
@@ -98,7 +105,6 @@ def check_market_data():
                     direction_txt = f"跌至 / 跌破 (≤ {target_p})"
 
                 if is_hit:
-                    alert["triggered"] = True
                     title = f"🎯【价格预警达成】{alert['name']}"
                     desp = (
                         f"### 🚨 设定的目标价格已触发！\n"
@@ -109,19 +115,17 @@ def check_market_data():
                         f"> 提示：此目标价预警已成功触发并通知到手机。"
                     )
                     send_wechat_notification(title, desp)
+                    # 触发后可在本地修改状态，云端会自动同步
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] 暂时未获取到有效的白银价格，等待下一轮...")
+            print(f"[{time.strftime('%H:%M:%S')}] 正在等待有效的白银主力价格...")
 
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] [错误] 抓取异常: {e}")
 
-def pd_notnull(val):
-    return val is not None and str(val) != 'nan'
-
 if __name__ == "__main__":
     print("=" * 60)
-    print(" 🎯 沪银目标价格预警 Guard 进程已启动（终极兼容版）")
-    print(f" ⏱️ 轮询频率: 每 {CHECK_INTERVAL} 秒")
+    print(" 🎯 沪银目标价格预警 Guard 进程已启动（全自动JSON动态同步版）")
+    print(f" ⏱️ 轮询频率: 每 {CHECK_INTERVAL} 秒（每次轮询自动同步 Git 配置）")
     print("=" * 60)
     
     while True:
