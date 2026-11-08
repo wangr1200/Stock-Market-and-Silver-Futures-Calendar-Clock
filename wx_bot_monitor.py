@@ -6,13 +6,6 @@ import sys
 import akshare as ak
 
 # ================= 1. 配置区域 =================
-SERVER_CHAN_KEY = get_server_key()
-CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
-
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
-ALERTS_FILE = os.path.join(CACHE_DIR, "price_alerts.json")
-
-
 def get_server_key():
     # 安全获取 Server酱 Key: 优先从环境变量读取，其次从 config.json 读取
     CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
@@ -28,6 +21,13 @@ def get_server_key():
     except Exception:
         pass
     return ""
+
+SERVER_CHAN_KEY = get_server_key()
+CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
+
+CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
+ALERTS_FILE = os.path.join(CACHE_DIR, "price_alerts.json")
+
 
 def load_alerts():
     if os.path.exists(ALERTS_FILE):
@@ -171,7 +171,7 @@ def pd_notnull(val):
 if __name__ == "__main__":
     is_once_mode = "--once" in sys.argv or os.environ.get("GITHUB_ACTIONS") == "true"
     print("=" * 60)
-    print(f" 沪银价格预警 Guard 进程启动 | 模式: {'单次抓ique(云端)' if is_once_mode else '死循环盯盘(本地)'}")
+    print(f" 沪银价格预警 Guard 进程启动 | 模式: {'单次抓取(云端)' if is_once_mode else '死循环盯盘(本地)'}")
     print("=" * 60)
     
     if is_once_mode:
