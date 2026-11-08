@@ -1,2 +1,2 @@
-python create.py
+python wx_bot_monitor.py
 pause

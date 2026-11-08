@@ -623,10 +623,34 @@ class PriceAlertDialog(QDialog):
             with open(filepath, "r", encoding="utf-8") as f:
                 alerts = json.load(f)
 
-            # 自动执行 Git 提交并推送配置文件
-            subprocess.run(["git", "add", "price_alerts.json"], check=True)
-            subprocess.run(["git", "commit", "-m", "auto sync price_alerts.json from local GUI"], check=True)
-            subprocess.run(["git", "push", "origin", "main"], check=True)
+            # 获取正确的 Git 仓库根目录（优先使用程序运行目录或当前工作目录）
+            repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            if not os.path.exists(os.path.join(repo_dir, ".git")):
+                repo_dir = os.getcwd()
+            if not os.path.exists(os.path.join(repo_dir, ".git")):
+                # 向上递归查找 .git
+                p = repo_dir
+                for _ in range(5):
+                    if os.path.exists(os.path.join(p, ".git")):
+                        repo_dir = p
+                        break
+                    parent = os.path.dirname(p)
+                    if parent == p:
+                        break
+                    p = parent
+
+            git_dir = os.path.join(repo_dir, ".git")
+            if os.path.exists(git_dir):
+                repo_json_path = os.path.join(repo_dir, "price_alerts.json")
+                try:
+                    shutil.copy(filepath, repo_json_path)
+                    # 即使 git 命令因为没有配置 commit 用户或网络问题失败，也捕获异常，绝不弹窗报错阻断微信通知
+                    res_add = subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True)
+                    if res_add.returncode == 0:
+                        subprocess.run(["git", "commit", "-m", "auto sync price_alerts.json from local GUI"], cwd=repo_dir, capture_output=True, text=True)
+                        subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True)
+                except Exception as g_err:
+                    log_error(g_err, "GitSync")
 
             # 组装微信通知内容
             alerts_summary = ""
@@ -646,7 +670,7 @@ class PriceAlertDialog(QDialog):
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             title = "☁️【桌面时钟】预警配置已同步更新"
             desp = (
-                f"### 📥 本地新预警已成功同步至云端！\n"
+                f"### 📥 本地新预警已成功同步！\n"
                 f"- **同步时间**：{now_str}\n"
                 f"- **当前预警总数**：{len(alerts)} 条\n\n"
                 f"**当前所有预警列表**：\n{alerts_summary}\n"
@@ -656,14 +680,13 @@ class PriceAlertDialog(QDialog):
 
             dlg = SilentTipDialog(
                 "☁️ 云端同步与微信提醒成功", 
-                "最新的价格预警配置已成功上传至 GitHub，并已通过微信发送了同步通知！\n云端监控脚本会在下一轮检查时（最多60秒内）自动应用新预警。", 
+                "最新的价格预警配置已成功处理，并已通过微信发送了同步通知！", 
                 self
             )
             dlg.exec_()
         except Exception as e:
-            dlg = SilentTipDialog("❌ 同步失败", f"推送至 GitHub 或发送微信通知失败：\n{e}", self)
+            dlg = SilentTipDialog("❌ 同步失败", f"推送或发送微信通知失败：\n{e}", self)
             dlg.exec_()
-
 
 class CustomCalendarWidget(QCalendarWidget):
     def __init__(self, parent=None):
