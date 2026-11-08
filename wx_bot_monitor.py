@@ -41,13 +41,21 @@ def send_wechat_notification(title, desp):
             if res_json.get("code") == 0:
                 print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [成功] 微信价格预警已成功推送到手机！")
     except Exception as e:
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [异常] 发送微信消息失败: {e}")
+        print(f"[{time.strftime('%H:%M:%S')}] [异常] 发送微信消息失败: {e}")
 
 def check_market_data():
     try:
-        df = ak.futures_zh_spot(symbol="AG0", market="SHFE")
+        df = None
+        try:
+            df = ak.futures_zh_spot(symbol="AG0", market="SHFE")
+        except Exception:
+            pass
+
         if df is None or df.empty:
-            df = ak.futures_zh_realtime(market="SHFE")
+            try:
+                df = ak.futures_zh_realtime(market="SHFE")
+            except Exception:
+                pass
 
         if df is None or df.empty:
             print(f"[{time.strftime('%H:%M:%S')}] 未能获取到行情数据...")
@@ -57,30 +65,36 @@ def check_market_data():
         contract_desc = "沪银主力 (AG0)"
 
         for _, row in df.iterrows():
-            row_str = str(row.values).upper()
-            if 'AG' in row_str or '沪银' in row_str:
-                for col in ['trade', 'price', '最新价', '现价']:
-                    if col in row and pd_notnull(row[col]):
-                        try:
-                            val = float(row[col])
-                            if val > 0:
-                                current_price = val
-                                break
-                        except:
-                            pass
-                if current_price > 0:
-                    break
+            try:
+                row_str = str(row.values).upper()
+                if 'AG' in row_str or '沪银' in row_str:
+                    for col in ['trade', 'price', '最新价', '现价']:
+                        if col in row and pd_notnull(row[col]):
+                            try:
+                                val = float(row[col])
+                                if val > 0:
+                                    current_price = val
+                                    break
+                            except:
+                                pass
+                    if current_price > 0:
+                        break
+            except Exception:
+                continue
 
         if current_price == 0:
-            df_main = ak.futures_main_sina()
-            if df_main is not None and not df_main.empty:
-                for _, row in df_main.iterrows():
-                    symbol = str(row.get('symbol', '')).upper()
-                    name = str(row.get('name', ''))
-                    if 'AG' in symbol or '银' in name:
-                        current_price = float(row.get('trade', row.get('price', 0)))
-                        contract_desc = f"{name} ({symbol})"
-                        break
+            try:
+                df_main = ak.futures_main_sina()
+                if df_main is not None and not df_main.empty:
+                    for _, row in df_main.iterrows():
+                        symbol = str(row.get('symbol', '')).upper()
+                        name = str(row.get('name', ''))
+                        if 'AG' in symbol or '银' in name:
+                            current_price = float(row.get('trade', row.get('price', 0)))
+                            contract_desc = f"{name} ({symbol})"
+                            break
+            except Exception:
+                pass
 
         if current_price > 0:
             print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_desc} | 当前最新价: {current_price}")
@@ -137,7 +151,7 @@ def pd_notnull(val):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print(" 沪银目标价格预警云端 Guard 进程已启动（动态JSON配置版）")
+    print(" 沪银目标价格预警云端 Guard 进程已启动（动态JSON配置版 - 健壮兼容版）")
     print(f" 轮询频率: 每 {CHECK_INTERVAL} 秒")
     print("=" * 60)
     

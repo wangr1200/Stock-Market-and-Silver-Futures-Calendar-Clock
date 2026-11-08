@@ -1,0 +1,36 @@
+name: Market Auto Guard and Daily Review
+
+on:
+  schedule:
+    # 设定北京时间每个交易日运行（UTC时间需要减8小时，比如北京时间每天 15:30 对应 UTC 07:30）
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch: # 支持手动随时在网页端一键触发
+
+jobs:
+  run-market-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 检出仓库代码
+        uses: actions/checkout@v3
+
+      - name: 2. 配置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 3. 安装依赖库
+        run: |
+          pip install requests akshare pandas
+
+      - name: 4. 运行云端盯盘与复盘脚本
+        run: |
+          python wx_bot_monitor.py
+
+      - name: 5. 自动提交生成的复盘日报到仓库
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          git diff --quiet && git diff --cached --quiet || (git commit -m "auto: cloud market review and sync" && git push)
