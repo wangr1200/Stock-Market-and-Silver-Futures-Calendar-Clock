@@ -1,4 +1,5 @@
-# PyInstaller
-#build/
-#dist/
-#*.spec
+create.exe
+build/
+dist/
+*.spec
+.market_clock_cache/
