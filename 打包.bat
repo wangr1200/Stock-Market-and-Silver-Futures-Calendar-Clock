@@ -1,17 +1,13 @@
 @echo off
-chcp 65001 >nul
-echo [1/4] 正在强行清理后台残留的旧进程...
-taskkill /f /im create.py 2>nul
-taskkill /f /im python.exe 2>nul
+chcp 65001 >null
+echo [1/4] 正在清理旧的打包残留缓存...
+rd /s /q build >null
+rd /s /q dist >null
+del /f /q *.spec >null
 
-echo [2/4] 正在彻底清除 PyInstaller 编译缓存...
-rd /s /q build 2>nul
-rd /s /q dist 2>nul
-del /f /q *.spec 2>nul
-
-echo [3/4] 正在执行 PyInstaller 高净空打包...
-:: 加 --clean 彻底清理缓存，--noconsole 去除黑窗口，--icon 指定软件图标
-pyinstaller --clean --noconsole --onefile --icon=icon.ico --version-file=version.txt create.py
+echo [2/4] 正在执行 PyInstaller 高净空打包...
+:: 如果你的主入口是 create.py 保持不变；如果是其他主程序请将 create.py 替换为你的文件名
+pyinstaller --clean --noconsole --onefile --icon=icon.ico --add-data "wx_bot_monitor.py;." create.py
 
 if %errorlevel% neq 0 (
     echo ========================================================
@@ -21,5 +17,5 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [4/4] 打包成功！新版 create.exe 已生成在 dist 目录。
+echo [4/4] 打包成功！新版程序已生成在 dist 目录。
 pause
