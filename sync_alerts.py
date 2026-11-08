@@ -1,94 +1,124 @@
+# -*- coding: utf-8 -*-
+"""
+sync_alerts.py - MarketDesktopClock 云端同步与预警推送辅助脚本
+支持多线程异步执行 Git 同步（add, commit, push）与 Server酱微信推送，避免网络卡顿导致 UI 线程阻塞。
+"""
+
 import os
-import sys
-import shutil
 import subprocess
-import json
 import requests
-import datetime
+from PyQt5.QtCore import QThread, pyqtSignal
+
+class GitSyncWorker(QThread):
+    """后台异步执行 Git 同步与 Server酱推送的线程类"""
+    finished_signal = pyqtSignal(bool, str)  # 成功状态 (bool), 提示信息 (str)
+
+    def __init__(self, repo_path=None, commit_msg="Auto-sync: update alert configs"):
+        super().__init__()
+        # 默认定位到脚本所在同级目录（项目根目录，与 .git 同级）
+        if repo_path:
+            self.repo_path = repo_path
+        else:
+            self.repo_path = os.path.dirname(os.path.abspath(__file__))
+        self.commit_msg = commit_msg
+
+    def run(self):
+        try:
+            # 1. 检查是否存在 .git 目录
+            git_dir = os.path.join(self.repo_path, ".git")
+            if not os.path.isdir(git_dir):
+                self.finished_signal.emit(False, "错误: 未找到 .git 目录，无法进行 Git 同步")
+                return
+
+            # 2. 执行 git add .
+            res_add = subprocess.run(
+                ["git", "add", "."],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if res_add.returncode != 0:
+                self.finished_signal.emit(False, f"Git add 失败: {res_add.stderr.strip()}")
+                return
+
+            # 3. 执行 git commit
+            res_commit = subprocess.run(
+                ["git", "commit", "-m", self.commit_msg],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            # 如果没有变动（nothing to commit），commit 返回码非 0 属于正常情况，可继续或提示
+            # 这里对常见无变动提示做兼容
+            if res_commit.returncode != 0:
+                stdout_lower = res_commit.stdout.lower()
+                if "nothing to commit" not in stdout_lower and "nothing added to commit" not in stdout_lower:
+                    # 如果不是因为没有修改导致的，则可能是其他配置错误
+                    pass
+
+            # 4. 执行 git push (最容易因网络/VPN慢而阻塞的环节，设置合理的 timeout=30秒)
+            res_push = subprocess.run(
+                ["git", "push"],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if res_push.returncode != 0:
+                err_msg = res_push.stderr.strip() or res_push.stdout.strip()
+                self.finished_signal.emit(False, f"Git push 失败 (网络或VPN较慢): {err_msg}")
+                return
+
+            self.finished_signal.emit(True, "云端同步成功 (Git Push 完成)")
+
+        except subprocess.TimeoutExpired:
+            self.finished_signal.emit(False, "Git 同步超时：网络连接较慢或 VPN 响应延迟，请检查网络状态")
+        except Exception as e:
+            self.finished_signal.emit(False, f"同步异常错误: {str(e)}")
 
 
-def get_server_key():
-    # 安全获取 Server酱 Key: 优先从环境变量读取，其次从 config.json 读取
-    CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
-    key = os.getenv("SERVER_CHAN_KEY")
-    if key:
-        return key.strip()
+def sync_to_cloud(repo_path=None, commit_msg="Auto-sync: update alert configs"):
+    """
+    阻塞式同步函数（适用于非 UI 场景或命令行调用）。
+    如果在 PyQt GUI 中调用，建议使用上方的 GitSyncWorker 异步线程，以防 UI 卡死。
+    """
+    path = repo_path or os.path.dirname(os.path.abspath(__file__))
     try:
-        config_file = os.path.join(CACHE_DIR, "config.json")
-        if os.path.exists(config_file):
-            with open(config_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data.get("server_chan_key", "").strip()
-    except Exception:
-        pass
-    return ""
-
-def sync_to_cloud():
-    """统一的本地预警配置同步到 Git 云端与微信推送函数"""
-    CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
-    filepath = os.path.join(CACHE_DIR, "price_alerts.json")
-    
-    if not os.path.exists(filepath):
-        return False, "本地未找到 price_alerts.json 文件"
-
-    try:
-        # 1. 查找 Git 仓库根目录
-        repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        if not os.path.exists(os.path.join(repo_dir, ".git")):
-            repo_dir = os.getcwd()
-        if not os.path.exists(os.path.join(repo_dir, ".git")):
-            p = repo_dir
-            for _ in range(5):
-                if os.path.exists(os.path.join(p, ".git")):
-                    repo_dir = p
-                    break
-                parent = os.path.dirname(p)
-                if parent == p:
-                    break
-                p = parent
-        
-        # 2. 复制到 Git 目录并执行 Git 提交推送
-        git_dir = os.path.join(repo_dir, ".git")
-        if os.path.exists(git_dir):
-            repo_json_path = os.path.join(repo_dir, "price_alerts.json")
-            try:
-                shutil.copy(filepath, repo_json_path)
-                res_add = subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True)
-                if res_add.returncode == 0:
-                    subprocess.run(["git", "commit", "-m", "auto sync price_alerts.json from local GUI"], cwd=repo_dir, capture_output=True, text=True)
-                    subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True)
-            except Exception as g_err:
-                pass
-
-        # 3. 读取内容并发微信通知
-        with open(filepath, "r", encoding="utf-8") as f:
-            alerts = json.load(f)
-
-        alerts_summary = ""
-        for idx, a in enumerate(alerts):
-            c_name = a.get("contract", "")
-            c_type = "涨到 (≥)" if a.get("type") == "up" else "跌到 (≤)"
-            c_target = a.get("target", 0.0)
-            status = "监控中" if a.get("active", True) else "已触发"
-            alerts_summary += f"- {idx+1}. **{c_name}** | {c_type} **{c_target}** | {status}\n"
-
-        if not alerts_summary:
-            alerts_summary = "暂无活跃预警"
-
-        server_key = get_server_key()
-        url = f"https://sctapi.ftqq.com/{server_key}.send" if server_key else ""
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        title = "☁️【桌面时钟】预警配置已同步更新"
-        desp = (
-            f"### 📥 本地新预警已成功同步！\n"
-            f"- **同步时间**：{now_str}\n"
-            f"- **当前预警总数**：{len(alerts)} 条\n\n"
-            f"**当前所有预警列表**：\n{alerts_summary}\n"
-            f"> 💡 云端监控进程将在下一轮（60秒内）自动应用最新规则。"
-        )
-        if server_key:
-            requests.post(url, data={"title": title, "desp": desp}, timeout=5)
-            
-        return True, f"成功同步 {len(alerts)} 条预警到云端并通过微信完成推送"
+        subprocess.run(["git", "add", "."], cwd=path, check=True, timeout=10)
+        subprocess.run(["git", "commit", "-m", commit_msg], cwd=path, timeout=10)
+        subprocess.run(["git", "push"], cwd=path, check=True, timeout=30)
+        return True, "同步成功"
+    except subprocess.TimeoutExpired:
+        return False, "同步超时"
+    except subprocess.CalledProcessError as e:
+        return False, f"同步失败: {str(e)}"
     except Exception as e:
-        return False, str(e)
+        return False, f"异常: {str(e)}"
+
+
+def send_serverchan_notification(title, desp="", sckey=None):
+    """
+    Server酱微信推送通知辅助函数
+    """
+    key = sckey or os.environ.get("SCKEY")
+    if not key:
+        return False, "未配置 Server酱 SCKEY"
+    
+    url = f"https://sctapi.ftqq.com/{key}.send"
+    data = {
+        "title": title,
+        "desp": desp
+    }
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        if response.status_code == 200:
+            res_json = response.json()
+            if res_json.get("code") == 0:
+                return True, "微信推送成功"
+            else:
+                return False, f"Server酱返回错误: {res_json.get('message')}"
+        return False, f"HTTP 请求失败: {response.status_code}"
+    except Exception as e:
+        return False, f"推送异常: {str(e)}"
