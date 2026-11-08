@@ -2,6 +2,7 @@ import time
 import requests
 import os
 import json
+import sys
 import akshare as ak
 
 # ================= 1. 配置区域 =================
@@ -87,7 +88,7 @@ def check_market_data():
                 df_main = ak.futures_main_sina()
                 if df_main is not None and not df_main.empty:
                     for _, row in df_main.iterrows():
-                        symbol = str(row.get('symbol', '')).upper()
+                        symbol = str(row.get('symbol', '')).username if hasattr(row.get('symbol', ''), 'username') else str(row.get('symbol', '')).upper()
                         name = str(row.get('name', ''))
                         if 'AG' in symbol or '银' in name:
                             current_price = float(row.get('trade', row.get('price', 0)))
@@ -141,7 +142,7 @@ def check_market_data():
             if updated:
                 save_alerts(alerts)
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] 暂时未获取到有效的白银价格，等待下一轮...")
+            print(f"[{time.strftime('%H:%M:%S')}] 暂时未获取到有效的白银价格...")
 
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] [错误] 抓取异常: {e}")
@@ -150,11 +151,15 @@ def pd_notnull(val):
     return val is not None and str(val) != 'nan'
 
 if __name__ == "__main__":
+    is_once_mode = "--once" in sys.argv or os.environ.get("GITHUB_ACTIONS") == "true"
     print("=" * 60)
-    print(" 沪银目标价格预警云端 Guard 进程已启动（动态JSON配置版 - 健壮兼容版）")
-    print(f" 轮询频率: 每 {CHECK_INTERVAL} 秒")
+    print(f" 沪银价格预警 Guard 进程启动 | 模式: {'单次抓取(云端)' if is_once_mode else '死循环盯盘(本地)'}")
     print("=" * 60)
     
-    while True:
+    if is_once_mode:
         check_market_data()
-        time.sleep(CHECK_INTERVAL)
+        print(f"[{time.strftime('%H:%M:%S')}] 云端单次任务执行完成，正常退出。")
+    else:
+        while True:
+            check_market_data()
+            time.sleep(CHECK_INTERVAL)
