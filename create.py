@@ -665,8 +665,18 @@ class PriceAlertDialog(QDialog):
                 alerts_summary = "暂无活跃预警"
 
             # 发送 Server酱 微信推送
-            server_key = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
-            url = f"https://sctapi.ftqq.com/{server_key}.send"
+            # 安全建议：通过环境变量 SERVER_CHAN_KEY 或 config.json 读取
+            server_key = os.getenv("SERVER_CHAN_KEY", "")
+            if not server_key:
+                try:
+                    config_file = os.path.join(CACHE_DIR, "config.json")
+                    if os.path.exists(config_file):
+                        with open(config_file, "r", encoding="utf-8") as f:
+                            cfg = json.load(f)
+                            server_key = cfg.get("server_chan_key", "")
+                except Exception:
+                    pass
+            url = f"https://sctapi.ftqq.com/{server_key}.send" if server_key else ""
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             title = "☁️【桌面时钟】预警配置已同步更新"
             desp = (
@@ -676,7 +686,8 @@ class PriceAlertDialog(QDialog):
                 f"**当前所有预警列表**：\n{alerts_summary}\n"
                 f"> 💡 云端监控进程将在下一轮（60秒内）自动应用最新规则。"
             )
-            requests.post(url, data={"title": title, "desp": desp}, timeout=5)
+            if server_key:
+                requests.post(url, data={"title": title, "desp": desp}, timeout=5)
 
             dlg = SilentTipDialog(
                 "☁️ 云端同步与微信提醒成功", 

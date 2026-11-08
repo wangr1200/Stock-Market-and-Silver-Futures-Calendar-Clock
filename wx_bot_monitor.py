@@ -6,7 +6,8 @@ import sys
 import akshare as ak
 
 # ================= 1. 配置区域 =================
-SERVER_CHAN_KEY = "SCT464863Tfmh0nHqPb8JmYygfidSRGa2P"
+# 安全建议：通过环境变量 SERVER_CHAN_KEY 配置 Server酱 Key，避免明文泄露到代码仓库中
+SERVER_CHAN_KEY = os.getenv("SERVER_CHAN_KEY", "")
 CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
@@ -30,6 +31,9 @@ def save_alerts(alerts):
         print(f"[{time.strftime('%H:%M:%S')}] 保存预警文件失败: {e}")
 
 def send_wechat_notification(title, desp):
+    if not SERVER_CHAN_KEY:
+        print(f"[{time.strftime('%H:%M:%S')}] [提示] 未检测到 SERVER_CHAN_KEY 环境变量，跳过微信推送。")
+        return
     url = f"https://sctapi.ftqq.com/{SERVER_CHAN_KEY}.send"
     data = {
         "title": title,
@@ -88,7 +92,7 @@ def check_market_data():
                 df_main = ak.futures_main_sina()
                 if df_main is not None and not df_main.empty:
                     for _, row in df_main.iterrows():
-                        symbol = str(row.get('symbol', '')).username if hasattr(row.get('symbol', ''), 'username') else str(row.get('symbol', '')).upper()
+                        symbol = str(row.get('symbol', '')).upper()
                         name = str(row.get('name', ''))
                         if 'AG' in symbol or '银' in name:
                             current_price = float(row.get('trade', row.get('price', 0)))
