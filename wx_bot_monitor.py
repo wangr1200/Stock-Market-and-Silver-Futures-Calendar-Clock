@@ -34,66 +34,93 @@ def send_wechat_notification(title, desp):
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [异常] 发送微信消息失败: {e}")
 
 def check_market_data():
-    """检查行情并精准比对沪银目标价格"""
+    """检查行情并精准获取沪银实时价格"""
     try:
-        # 使用稳定可靠的主力合约接口
-        df = ak.futures_main_sina()
+        # 直接获取白银品种实时行情
+        df = ak.futures_zh_spot(symbol="AG0", market="SHFE")
         if df is None or df.empty:
-            print(f"[{time.strftime('%H:%M:%S')}] 未能获取到期货主力行情...")
+            # 备用方案：获取上期所实时数据并在其中查找 AG
+            df = ak.futures_zh_realtime(market="SHFE")
+
+        if df is None or df.empty:
+            print(f"[{time.strftime('%H:%M:%S')}] 未能获取到行情数据...")
             return
 
-        found = False
+        current_price = 0.0
+        contract_desc = "沪银主力 (AG0)"
+
+        # 遍历查找白银
         for _, row in df.iterrows():
-            symbol = str(row.get('symbol', '')).upper()
-            name = str(row.get('name', ''))
-            
-            # 精准匹配沪银主力合约（代码包含 AG 或名称包含沪银）
-            if 'AG' in symbol or '沪银' in name:
-                found = True
-                current_price = float(row.get('trade', row.get('price', 0)))
-                contract_desc = f"{name} ({symbol})"
+            row_str = str(row.values).upper()
+            if 'AG' in row_str or '沪银' in row_str:
+                # 尝试提取价格字段（兼容不同接口的列名）
+                for col in ['trade', 'price', '最新价', '现价']:
+                    if col in row and pd_notnull(row[col]):
+                        try:
+                            val = float(row[col])
+                            if val > 0:
+                                current_price = val
+                                break
+                        except:
+                            pass
+                if current_price > 0:
+                    break
+
+        # 如果上面没抓到，尝试用新浪主力表格直接按行匹配
+        if current_price == 0:
+            df_main = ak.futures_main_sina()
+            if df_main is not None and not df_main.empty:
+                for _, row in df_main.iterrows():
+                    symbol = str(row.get('symbol', '')).upper()
+                    name = str(row.get('name', ''))
+                    if 'AG' in symbol or '银' in name:
+                        current_price = float(row.get('trade', row.get('price', 0)))
+                        contract_desc = f"{name} ({symbol})"
+                        break
+
+        if current_price > 0:
+            print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_desc} | 当前最新价: {current_price}")
+
+            for alert in TARGET_ALERTS:
+                if alert["triggered"]:
+                    continue
                 
-                print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_desc} | 当前最新价: {current_price}")
+                target_p = alert["target_price"]
+                cond = alert["condition"]
+                
+                is_hit = False
+                direction_txt = ""
+                if cond == ">=" and current_price >= target_p:
+                    is_hit = True
+                    direction_txt = f"涨至 / 突破 (≥ {target_p})"
+                elif cond == "<=" and current_price <= target_p:
+                    is_hit = True
+                    direction_txt = f"跌至 / 跌破 (≤ {target_p})"
 
-                for alert in TARGET_ALERTS:
-                    if alert["triggered"]:
-                        continue
-                    
-                    target_p = alert["target_price"]
-                    cond = alert["condition"]
-                    
-                    is_hit = False
-                    direction_txt = ""
-                    if cond == ">=" and current_price >= target_p:
-                        is_hit = True
-                        direction_txt = f"涨至 / 突破 (≥ {target_p})"
-                    elif cond == "<=" and current_price <= target_p:
-                        is_hit = True
-                        direction_txt = f"跌至 / 跌破 (≤ {target_p})"
-
-                    if is_hit:
-                        alert["triggered"] = True
-                        title = f"🎯【价格预警达成】{alert['name']}"
-                        desp = (
-                            f"### 🚨 设定的目标价格已触发！\n"
-                            f"- **监控标的**：{contract_desc}\n"
-                            f"- **预警条件**：{direction_txt}\n"
-                            f"- **当前最新价**：**{current_price}**\n"
-                            f"- **触发时间**：{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                            f"> 提示：此目标价预警已成功触发并通知到手机。"
-                        )
-                        send_wechat_notification(title, desp)
-                break
-        
-        if not found:
-            print(f"[{time.strftime('%H:%M:%S')}] 未在列表中找到沪银合约...")
+                if is_hit:
+                    alert["triggered"] = True
+                    title = f"🎯【价格预警达成】{alert['name']}"
+                    desp = (
+                        f"### 🚨 设定的目标价格已触发！\n"
+                        f"- **监控标的**：{contract_desc}\n"
+                        f"- **预警条件**：{direction_txt}\n"
+                        f"- **当前最新价**：**{current_price}**\n"
+                        f"- **触发时间**：{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"> 提示：此目标价预警已成功触发并通知到手机。"
+                    )
+                    send_wechat_notification(title, desp)
+        else:
+            print(f"[{time.strftime('%H:%M:%S')}] 暂时未获取到有效的白银价格，等待下一轮...")
 
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] [错误] 抓取异常: {e}")
 
+def pd_notnull(val):
+    return val is not None and str(val) != 'nan'
+
 if __name__ == "__main__":
     print("=" * 60)
-    print(" 🎯 沪银目标价格预警 Guard 进程已启动（主力接口版）")
+    print(" 🎯 沪银目标价格预警 Guard 进程已启动（终极兼容版）")
     print(f" ⏱️ 轮询频率: 每 {CHECK_INTERVAL} 秒")
     print("=" * 60)
     
