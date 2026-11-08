@@ -9,8 +9,7 @@ CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
 # ----------------- 2. 目标价格预警规则表 -----------------
 TARGET_ALERTS = [
     {
-        "symbol_keyword": "AG",         # 匹配关键字（包含 AG 的合约，如 AG0 或 AG2702）
-        "name": "沪银 (AG2702/主力)",
+        "name": "沪银主力 (AG0)",
         "condition": ">=",             # '>=' 表示价格涨到或超过，'<=' 表示跌到或低于
         "target_price": 12523.0,       # 你设置的目标价格
         "triggered": False             # 触发状态标识
@@ -35,38 +34,33 @@ def send_wechat_notification(title, desp):
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [异常] 发送微信消息失败: {e}")
 
 def check_market_data():
-    """检查行情并精准匹配白银目标价格预警"""
+    """检查行情并精准比对沪银目标价格"""
     try:
-        # 获取全量期货实时行情或指数行情
-        df = ak.futures_zh_realtime(market="SHFE")
+        # 使用稳定可靠的主力合约接口
+        df = ak.futures_main_sina()
         if df is None or df.empty:
-            df = ak.futures_zh_realtime(symbol="AG0")
-
-        if df is None or df.empty:
-            print(f"[{time.strftime('%H:%M:%S')}] 未能获取到实时行情数据...")
+            print(f"[{time.strftime('%H:%M:%S')}] 未能获取到期货主力行情...")
             return
 
-        # 遍历查找包含白银（AG）的行
-        found_target = False
+        found = False
         for _, row in df.iterrows():
             symbol = str(row.get('symbol', '')).upper()
+            name = str(row.get('name', ''))
             
-            # 精准匹配沪银合约
-            if 'AG' in symbol:
-                found_target = True
+            # 精准匹配沪银主力合约（代码包含 AG 或名称包含沪银）
+            if 'AG' in symbol or '沪银' in name:
+                found = True
                 current_price = float(row.get('trade', row.get('price', 0)))
-                contract_name = symbol
+                contract_desc = f"{name} ({symbol})"
                 
-                print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_name} | 当前最新价: {current_price}")
+                print(f"[{time.strftime('%H:%M:%S')}] 盯盘中 -> 合约: {contract_desc} | 当前最新价: {current_price}")
 
-                # 遍历目标价预警规则
                 for alert in TARGET_ALERTS:
                     if alert["triggered"]:
                         continue
                     
                     target_p = alert["target_price"]
                     cond = alert["condition"]
-                    name = alert["name"]
                     
                     is_hit = False
                     direction_txt = ""
@@ -79,10 +73,10 @@ def check_market_data():
 
                     if is_hit:
                         alert["triggered"] = True
-                        title = f"🎯【价格预警达成】{name}"
+                        title = f"🎯【价格预警达成】{alert['name']}"
                         desp = (
                             f"### 🚨 设定的目标价格已触发！\n"
-                            f"- **监控标的**：{name} ({contract_name})\n"
+                            f"- **监控标的**：{contract_desc}\n"
                             f"- **预警条件**：{direction_txt}\n"
                             f"- **当前最新价**：**{current_price}**\n"
                             f"- **触发时间**：{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
@@ -91,19 +85,16 @@ def check_market_data():
                         send_wechat_notification(title, desp)
                 break
         
-        if not found_target:
-            print(f"[{time.strftime('%H:%M:%S')}] 未在行情列表中找到 AG 合约...")
+        if not found:
+            print(f"[{time.strftime('%H:%M:%S')}] 未在列表中找到沪银合约...")
 
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] [错误] 抓取异常: {e}")
 
 if __name__ == "__main__":
     print("=" * 60)
-    print(" 🎯 纯粹目标价格预警 Guard 进程已启动（已修正白银合约过滤）")
+    print(" 🎯 沪银目标价格预警 Guard 进程已启动（主力接口版）")
     print(f" ⏱️ 轮询频率: 每 {CHECK_INTERVAL} 秒")
-    print(" 📌 当前监控的目标价列表:")
-    for a in TARGET_ALERTS:
-        print(f"    • [{a['name']}] 条件: 价格 {a['condition']} {a['target_price']}")
     print("=" * 60)
     
     while True:
