@@ -112,13 +112,17 @@ def check_is_market_open(now=None, market_type="AG"):
             return False
 
     if market_type == "AG":
-        if (datetime.time(9, 0) <= t <= datetime.time(11, 30)) or            (datetime.time(13, 30) <= t <= datetime.time(15, 0)) or            (t >= datetime.time(21, 0) or t <= datetime.time(2, 30)):
+        if (datetime.time(9, 0) <= t <= datetime.time(11, 30)) or \
+           (datetime.time(13, 30) <= t <= datetime.time(15, 0)) or \
+           (t >= datetime.time(21, 0) or t <= datetime.time(2, 30)):
             return True
     elif market_type == "A":
-        if (datetime.time(9, 30) <= t <= datetime.time(11, 30)) or            (datetime.time(13, 0) <= t <= datetime.time(15, 0)):
+        if (datetime.time(9, 30) <= t <= datetime.time(11, 30)) or \
+           (datetime.time(13, 0) <= t <= datetime.time(15, 0)):
             return True
     elif market_type == "HK":
-        if (datetime.time(9, 30) <= t <= datetime.time(12, 0)) or            (datetime.time(13, 0) <= t <= datetime.time(16, 0)):
+        if (datetime.time(9, 30) <= t <= datetime.time(12, 0)) or \
+           (datetime.time(13, 0) <= t <= datetime.time(16, 0)):
             return True
         
     return False
@@ -942,7 +946,6 @@ class AkShareQuoteSource(BaseQuoteSource):
             import akshare as ak
             prefix = "AG" if target_type == "沪银" else "AU"
             
-            # 尝试多种 akshare 获取实时行情的途径
             df = None
             try:
                 df = ak.futures_zh_spot(symbol=prefix + "0")
@@ -954,7 +957,6 @@ class AkShareQuoteSource(BaseQuoteSource):
             
             if df is not None and not df.empty:
                 for _, row in df.iterrows():
-                    # 兼容中英文列名
                     symbol_str = str(row.get("symbol", "") or row.get("代码", "")).upper()
                     name_str = str(row.get("name", "") or row.get("名称", ""))
                     
@@ -1006,7 +1008,6 @@ class InternationalQuoteSource(BaseQuoteSource):
         import random
         is_gold = ("金" in target_type or "XAU" in target_type.upper())
         
-        # 1. 尝试从东方财富外盘贵金属 API 精准获取
         try:
             secid = "106.XAUUSD" if is_gold else "106.XAGUSD"
             url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f57,f58,f169,f170,f46,f44,f51,f52,f50,f47,f60,f48,f168,f161,f162,f163"
@@ -1051,7 +1052,6 @@ class InternationalQuoteSource(BaseQuoteSource):
         except Exception:
             pass
 
-        # 2. 备用 API：新浪外盘
         try:
             sina_sym = "hf_XAU" if is_gold else "hf_XAG"
             url = f"https://hq.sinajs.cn/list={sina_sym}"
@@ -1105,7 +1105,6 @@ class InternationalQuoteSource(BaseQuoteSource):
         except Exception:
             pass
 
-        # 3. 完美对齐用户当前终端真实行情的实时动态基准值 (伦敦金 4123.94 / 伦敦银 52.727)
         t_tick = int(time.time() * 10)
         random.seed(t_tick + (13 if is_gold else 37))
         
@@ -1398,7 +1397,6 @@ class CommodityQuoteWorker(QObject):
             if not fetched_ok and last_valid_info is not None:
                 self.data_fetched.emit(last_valid_info)
             elif is_intl:
-                # If international spot, always query InternationalQuoteSource to get live ticks every second
                 try:
                     intl_source = InternationalQuoteSource()
                     info = intl_source.get_quote(self.target_type)
@@ -1407,7 +1405,6 @@ class CommodityQuoteWorker(QObject):
                 except Exception:
                     pass
 
-            # Polling interval set to 1.0 second for ultra-responsive live streaming feel
             sleep_sec = 1.0
             if retry_count > 3:
                 sleep_sec = min(10.0, 1.0 * (2 ** (retry_count - 3)))
@@ -1540,7 +1537,6 @@ class ProfitLossCalculatorDialog(QDialog):
 
         layout.addLayout(form)
 
-        # 结果展示卡片与所有标签
         self.result_card = QWidget()
         self.result_card.setStyleSheet("background-color: #141820; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.2);")
         card_layout = QVBoxLayout(self.result_card)
@@ -1574,14 +1570,12 @@ class ProfitLossCalculatorDialog(QDialog):
         save_close_btn.clicked.connect(self.on_save_and_close)
         layout.addWidget(save_close_btn)
 
-        # 在所有控件创建完成后，安全连接信号
         self.comm_combo.currentIndexChanged.connect(self.on_commodity_combo_changed)
         self.dir_combo.currentIndexChanged.connect(self.on_param_changed)
         self.open_price_spin.valueChanged.connect(self.on_param_changed)
         self.lots_spin.valueChanged.connect(self.on_param_changed)
         self.comm_spin.valueChanged.connect(self.on_param_changed)
 
-        # 执行一次初始计算
         self.calculate()
 
     def on_commodity_combo_changed(self, idx):
@@ -1654,6 +1648,8 @@ class ProfitLossCalculatorDialog(QDialog):
     def on_save_and_close(self):
         self.save_current_params()
         self.accept()
+
+
 class ClockWindow(QWidget):
     def load_settings(self):
         settings_file = os.path.join(CACHE_DIR, "config.json")
@@ -2275,6 +2271,104 @@ class ClockWindow(QWidget):
         dialog = MarketCalendarDialog(self)
         dialog.exec_()
 
+    def get_market_countdown(self, now, market_type="AG"):
+        t = now.time()
+        weekday = now.weekday()
+        
+        if market_type == "AG":
+            if weekday == 5 and t <= datetime.time(2, 30):
+                close_dt = datetime.datetime.combine(now.date(), datetime.time(2, 30))
+                diff = close_dt - now
+                if diff.total_seconds() > 0:
+                    s = int(diff.total_seconds())
+                    return True, "贵金属期货：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            
+            if weekday >= 5:
+                days_ahead = 2 if weekday == 5 else 1
+                next_open = datetime.datetime.combine(now.date() + datetime.timedelta(days=days_ahead), datetime.time(9, 0))
+                diff = next_open - now
+                s = int(diff.total_seconds())
+                d = s // 86400
+                h = (s % 86400) // 3600
+                m = (s % 3600) // 60
+                return False, "贵金属期货：已休市", f"距开盘 {d}天 {h:02d}时{m:02d}分"
+
+            s_m_open = datetime.datetime.combine(now.date(), datetime.time(9, 0))
+            s_m_close = datetime.datetime.combine(now.date(), datetime.time(11, 30))
+            s_a_open = datetime.datetime.combine(now.date(), datetime.time(13, 30))
+            s_a_close = datetime.datetime.combine(now.date(), datetime.time(15, 0))
+            s_n_open = datetime.datetime.combine(now.date(), datetime.time(21, 0))
+            s_n_close = datetime.datetime.combine(now.date() + datetime.timedelta(days=1), datetime.time(2, 30))
+            
+            if t <= datetime.time(2, 30):
+                close_dt = datetime.datetime.combine(now.date(), datetime.time(2, 30))
+                diff = close_dt - now
+                s = int(diff.total_seconds())
+                return True, "贵金属期货：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+                
+            if datetime.time(9, 0) <= t <= datetime.time(11, 30):
+                diff = s_m_close - now
+                s = int(diff.total_seconds())
+                return True, "贵金属期货：交易中 (Live)", f"距休市 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(11, 30) < t < datetime.time(13, 30):
+                diff = s_a_open - now
+                s = int(diff.total_seconds())
+                return False, "贵金属期货：午间休市", f"距开盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(13, 30) <= t <= datetime.time(15, 0):
+                diff = s_a_close - now
+                s = int(diff.total_seconds())
+                return True, "贵金属期货：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(15, 0) < t < datetime.time(21, 0):
+                diff = s_n_open - now
+                s = int(diff.total_seconds())
+                return False, "贵金属期货：日间休市", f"距开盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(21, 0) <= t <= datetime.time(23, 59, 59):
+                diff = s_n_close - now
+                s = int(diff.total_seconds())
+                return True, "贵金属期货：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+                
+        elif market_type == "A":
+            if weekday >= 5:
+                days_ahead = 2 if weekday == 5 else 1
+                next_open = datetime.datetime.combine(now.date() + datetime.timedelta(days=days_ahead), datetime.time(9, 30))
+                diff = next_open - now
+                s = int(diff.total_seconds())
+                d = s // 86400
+                h = (s % 86400) // 3600
+                m = (s % 3600) // 60
+                return False, "股市：已休市", f"距开盘 {d}天 {h:02d}时{m:02d}分"
+                
+            s_m_open = datetime.datetime.combine(now.date(), datetime.time(9, 30))
+            s_m_close = datetime.datetime.combine(now.date(), datetime.time(11, 30))
+            s_a_open = datetime.datetime.combine(now.date(), datetime.time(13, 0))
+            s_a_close = datetime.datetime.combine(now.date(), datetime.time(15, 0))
+            
+            if t < datetime.time(9, 30):
+                diff = s_m_open - now
+                s = int(diff.total_seconds())
+                return False, "股市：未开盘", f"距开盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(9, 30) <= t <= datetime.time(11, 30):
+                diff = s_m_close - now
+                s = int(diff.total_seconds())
+                return True, "股市：交易中 (Live)", f"距午休 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(11, 30) < t < datetime.time(13, 0):
+                diff = s_a_open - now
+                s = int(diff.total_seconds())
+                return False, "股市：午间休市", f"距开盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(13, 0) <= t <= datetime.time(15, 0):
+                diff = s_a_close - now
+                s = int(diff.total_seconds())
+                return True, "股市：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            else:
+                next_open = datetime.datetime.combine(now.date() + datetime.timedelta(days=1), datetime.time(9, 30))
+                diff = next_open - now
+                s = int(diff.total_seconds())
+                h = s // 3600
+                m = (s % 3600) // 60
+                return False, "股市：已收盘", f"距开盘 {h:02d}时{m:02d}分"
+                
+        return False, "已休市", ""
+
     def update_clock(self):
         now = datetime.datetime.now()
         week_days = ['星期一','星期二','星期三','星期四','星期五','星期六','星期日']
@@ -2286,18 +2380,11 @@ class ClockWindow(QWidget):
         self.update_next_holiday(now)
         self.update_macro_countdown(now)
         
-        is_ag_open = check_is_market_open(now, market_type="AG")
-        is_a_open = check_is_market_open(now, market_type="A")
+        is_a_open, a_status, a_countdown = self.get_market_countdown(now, market_type="A")
+        is_ag_open, ag_status, ag_countdown = self.get_market_countdown(now, market_type="AG")
         
-        if is_a_open:
-            self.stock_status_label.setText("股市：交易中 (Live)")
-        else:
-            self.stock_status_label.setText("股市：已收盘 (静态锁定)")
-            
-        if is_ag_open:
-            self.silver_status_label.setText("贵金属期货：交易中 (Live)")
-        else:
-            self.silver_status_label.setText("贵金属期货：已休市 (收盘价锁定)")
+        self.stock_status_label.setText(f"{a_status}  <span style='color: #38bdf8; font-size: 11px;'>({a_countdown})</span>")
+        self.silver_status_label.setText(f"{ag_status}  <span style='color: #38bdf8; font-size: 11px;'>({ag_countdown})</span>")
 
     def update_macro_countdown(self, now):
         upcoming = []
