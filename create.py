@@ -800,9 +800,6 @@ class SettingsDialog(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        title = QLabel("桌面时钟设置与健康提醒")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #38bdf8; margin-bottom: 6px;")
-        layout.addWidget(title)
 
         form_layout = QFormLayout()
         form_layout.setSpacing(10)
@@ -818,10 +815,6 @@ class SettingsDialog(QDialog):
         self.ontop_chk.setStyleSheet("color: #e2e8f0; font-size: 13px;")
         self.ontop_chk.stateChanged.connect(self.toggle_ontop)
         form_layout.addRow(self.ontop_chk)
-
-        sep_lbl = QLabel("─── 系统与网络 ───")
-        sep_lbl.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: bold; margin-top: 4px;")
-        form_layout.addRow(sep_lbl)
 
         sep_lbl2 = QLabel("─── 个性化外观 ───")
         sep_lbl2.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: bold; margin-top: 4px;")
@@ -1010,92 +1003,88 @@ class SinaQuoteSource(BaseQuoteSource):
         import re
         prefix = "AG" if target_type == "沪银" else "AU"
         
+        try:
+            em_source = EastMoneyQuoteSource()
+            return em_source.get_quote(target_type)
+        except Exception:
+            pass
+
         headers = {
             "Referer": "https://finance.sina.com.cn",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         timestamp = int(time.time() * 1000)
-        
         symbols = ["nf_%s0" % prefix.lower(), "nf_%s" % prefix.lower()]
-
         url = "https://hq.sinajs.cn/list=%s&_t=%d" % (','.join(symbols), timestamp)
+        
         try:
             resp = requests.get(url, headers=headers, timeout=4)
             if resp.status_code == 200:
-                lines = resp.text.split(';')
-                valid_quotes = []
-                
-                for line in lines:
+                for line in resp.text.split(';'):
                     if 'hq_str_' in line and '="' in line:
-                        match_sym = re.search(r'hq_str_([a-zA-Z0-9_]+)=', line)
-                        sym_key = match_sym.group(1).upper() if match_sym else ""
-                        
                         parts_split = line.split('="')
                         if len(parts_split) > 1:
                             data_str = parts_split[1].strip('"')
                             if data_str:
                                 parts = data_str.split(',')
-                                if len(parts) >= 10:
+                                if len(parts) >= 12:
                                     try:
-                                        latest = safe_float(parts[7], 0.0)
-                                        if latest <= 0:
-                                            latest = safe_float(parts[6], 0.0)
-                                            
+                                        num_parts = [safe_float(p, 0.0) for p in parts if p.replace('.','',1).isdigit()]
+                                        
+                                        latest = 0.0
+                                        pre_settle = 0.0
+                                        
+                                        if prefix == "AU":
+                                            for p in parts:
+                                                val = safe_float(p, 0.0)
+                                                if 300.0 < val < 2000.0:
+                                                    latest = val
+                                                    break
+                                            if latest <= 0 and len(parts) > 4:
+                                                latest = safe_float(parts[4], 0.0)
+                                            if len(parts) > 13:
+                                                pre_settle = safe_float(parts[13], 0.0)
+                                            if pre_settle <= 0 and len(parts) > 9:
+                                                pre_settle = safe_float(parts[9], 0.0)
+                                        else:
+                                            for p in parts:
+                                                val = safe_float(p, 0.0)
+                                                if 3000.0 < val < 50000.0:
+                                                    latest = val
+                                                    break
+                                            if latest <= 0 and len(parts) > 4:
+                                                latest = safe_float(parts[4], 0.0)
+                                            if len(parts) > 13:
+                                                pre_settle = safe_float(parts[13], 0.0)
+                                            if pre_settle <= 0 and len(parts) > 9:
+                                                pre_settle = safe_float(parts[9], 0.0)
+
                                         if latest <= 0:
                                             continue
-
-                                        pre_settle = safe_float(parts[9], 0.0)
-                                        if pre_settle <= 0:
-                                            pre_settle = safe_float(parts[4], 0.0)
-
                                         if pre_settle <= 0:
                                             pre_settle = latest
-                                            
+
                                         change = latest - pre_settle
                                         change_pct = (change / pre_settle * 100.0) if pre_settle > 0 else 0.0
-                                        
-                                        volume = parts[13] if len(parts) > 13 else (parts[12] if len(parts) > 12 else "10000")
-                                        open_interest = parts[12] if len(parts) > 12 else "50000"
-                                        
-                                        bid1_p = safe_float(parts[5], latest - 1.0)
-                                        ask1_p = safe_float(parts[6], latest + 1.0)
-
-                                        if prefix == "AU":
-                                            price_str = "%.2f" % latest
-                                            change_str = "%+.2f" % change
-                                        else:
-                                            price_str = "%.0f" % latest
-                                            change_str = "%+.1f" % change
 
                                         contract_name = "AG2702" if prefix == "AG" else "AU2612"
                                         if len(parts) > 14 and parts[14]:
                                             contract_name = str(parts[14]).upper()
-                                        elif "NF_" in sym_key:
-                                            contract_name = sym_key.replace("NF_", "").upper()
-                                            if contract_name.endswith("0") and len(contract_name) > 3:
-                                                contract_name = contract_name[:-1]
 
-                                        valid_quotes.append({
-                                            "is_target": True,
+                                        return {
                                             "contract": contract_name,
-                                            "price": price_str,
-                                            "change": change_str,
+                                            "price": "%.2f" % latest if prefix == "AU" else "%.0f" % latest,
+                                            "change": "%+.2f" % change if prefix == "AU" else "%+.1f" % change,
                                             "change_pct": "%+.2f%%" % change_pct,
-                                            "volume": str(volume),
-                                            "open_interest": str(open_interest),
-                                            "bid1_p": "%.2f" % bid1_p if prefix == "AU" else "%.0f" % bid1_p,
+                                            "volume": str(parts[8] if len(parts) > 8 else "10000"),
+                                            "open_interest": str(parts[10] if len(parts) > 10 else "50000"),
+                                            "bid1_p": "%.2f" % latest,
                                             "bid1_v": "1",
-                                            "ask1_p": "%.2f" % ask1_p if prefix == "AU" else "%.0f" % ask1_p,
+                                            "ask1_p": "%.2f" % latest,
                                             "ask1_v": "1"
-                                        })
+                                        }
                                     except Exception:
                                         continue
-                
-                if valid_quotes:
-                    target_ones = [q for q in valid_quotes if q["is_target"]]
-                    if target_ones:
-                        return target_ones[0]
-                    return valid_quotes[0]
         except Exception:
             pass
             
@@ -1206,12 +1195,20 @@ class CommodityQuoteWorker(QObject):
                 if last_valid_info is not None:
                     self.data_fetched.emit(last_valid_info)
                 else:
-                    default_p = "12632" if self.target_type == "沪银" else "882.76"
+                    if self.target_type == "沪银":
+                        default_p = "12632"
+                        default_chg = "+55"
+                        default_pct = "+0.45%"
+                    else:
+                        default_p = "882.76"
+                        default_chg = "+3.50"
+                        default_pct = "+0.40%"
+
                     static_info = {
                         "contract": "AG2702" if self.target_type == "沪银" else "AU2612",
                         "price": default_p,
-                        "change": "+55",
-                        "change_pct": "+0.45%",
+                        "change": default_chg,
+                        "change_pct": default_pct,
                         "volume": "0",
                         "open_interest": "0",
                         "bid1_p": default_p,
