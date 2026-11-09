@@ -5,9 +5,28 @@ sync_alerts.py - MarketDesktopClock 云端同步与预警推送辅助脚本
 """
 
 import os
+import json
 import subprocess
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
+
+CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
+
+def get_server_key():
+    """统一安全获取 Server酱 Key: 优先环境变量，其次 config.json"""
+    key = os.getenv("SERVER_CHAN_KEY") or os.getenv("SCKEY")
+    if key:
+        return key.strip()
+    try:
+        config_file = os.path.join(CACHE_DIR, "config.json")
+        if os.path.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return (data.get("server_chan_key", "") or data.get("server_key", "")).strip()
+    except Exception:
+        pass
+    return ""
+
 
 class GitSyncWorker(QThread):
     """后台异步执行 Git 同步与 Server酱推送的线程类"""
@@ -15,7 +34,6 @@ class GitSyncWorker(QThread):
 
     def __init__(self, repo_path=None, commit_msg="Auto-sync: update alert configs"):
         super().__init__()
-        # 默认定位到脚本所在同级目录（项目根目录，与 .git 同级）
         if repo_path:
             self.repo_path = repo_path
         else:
@@ -24,13 +42,11 @@ class GitSyncWorker(QThread):
 
     def run(self):
         try:
-            # 1. 检查是否存在 .git 目录
             git_dir = os.path.join(self.repo_path, ".git")
             if not os.path.isdir(git_dir):
                 self.finished_signal.emit(False, "错误: 未找到 .git 目录，无法进行 Git 同步")
                 return
 
-            # 2. 执行 git add .
             res_add = subprocess.run(
                 ["git", "add", "."],
                 cwd=self.repo_path,
@@ -42,7 +58,6 @@ class GitSyncWorker(QThread):
                 self.finished_signal.emit(False, f"Git add 失败: {res_add.stderr.strip()}")
                 return
 
-            # 3. 执行 git commit
             res_commit = subprocess.run(
                 ["git", "commit", "-m", self.commit_msg],
                 cwd=self.repo_path,
@@ -50,15 +65,11 @@ class GitSyncWorker(QThread):
                 text=True,
                 timeout=10
             )
-            # 如果没有变动（nothing to commit），commit 返回码非 0 属于正常情况，可继续或提示
-            # 这里对常见无变动提示做兼容
             if res_commit.returncode != 0:
                 stdout_lower = res_commit.stdout.lower()
                 if "nothing to commit" not in stdout_lower and "nothing added to commit" not in stdout_lower:
-                    # 如果不是因为没有修改导致的，则可能是其他配置错误
                     pass
 
-            # 4. 执行 git push (最容易因网络/VPN慢而阻塞的环节，设置合理的 timeout=30秒)
             res_push = subprocess.run(
                 ["git", "push"],
                 cwd=self.repo_path,
@@ -80,10 +91,6 @@ class GitSyncWorker(QThread):
 
 
 def sync_to_cloud(repo_path=None, commit_msg="Auto-sync: update alert configs"):
-    """
-    阻塞式同步函数（适用于非 UI 场景或命令行调用）。
-    如果在 PyQt GUI 中调用，建议使用上方的 GitSyncWorker 异步线程，以防 UI 卡死。
-    """
     path = repo_path or os.path.dirname(os.path.abspath(__file__))
     try:
         subprocess.run(["git", "add", "."], cwd=path, check=True, timeout=10)
@@ -100,9 +107,9 @@ def sync_to_cloud(repo_path=None, commit_msg="Auto-sync: update alert configs"):
 
 def send_serverchan_notification(title, desp="", sckey=None):
     """
-    Server酱微信推送通知辅助函数
+    Server酱微信推送通知辅助函数（已修复：支持自动从 config.json 及环境变量读取 Key）
     """
-    key = sckey or os.environ.get("SCKEY")
+    key = sckey or get_server_key()
     if not key:
         return False, "未配置 Server酱 SCKEY"
     
