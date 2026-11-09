@@ -620,6 +620,8 @@ class PriceAlertDialog(QDialog):
         try:
             filepath = self.get_alerts_filepath()
             if not os.path.exists(filepath):
+                dlg = SilentTipDialog("同步提示", "本地暂无预警配置文件。", self)
+                dlg.exec_()
                 return
 
             with open(filepath, "r", encoding="utf-8") as f:
@@ -651,17 +653,23 @@ class PriceAlertDialog(QDialog):
             if not alerts_summary:
                 alerts_summary = "暂无活跃预警"
 
-            server_key = os.getenv("SERVER_CHAN_KEY", "")
+            server_key = os.getenv("SERVER_CHAN_KEY", "").strip()
             if not server_key:
-                try:
-                    config_file = os.path.join(CACHE_DIR, "config.json")
-                    if os.path.exists(config_file):
+                config_file = os.path.join(CACHE_DIR, "config.json")
+                if os.path.exists(config_file):
+                    try:
                         with open(config_file, "r", encoding="utf-8") as f:
                             cfg = json.load(f)
-                            server_key = cfg.get("server_chan_key", "") or cfg.get("server_key", "")
-                except Exception:
-                    pass
-            url = "https://sctapi.ftqq.com/%s.send" % server_key if server_key else ""
+                            server_key = (cfg.get("server_chan_key") or cfg.get("server_key") or "").strip()
+                    except Exception:
+                        pass
+
+            if not server_key:
+                dlg = SilentTipDialog("微信推送失败", "未检测到 Server酱 SendKey！\n请在 config.json 中配置有效的 server_chan_key。", self)
+                dlg.exec_()
+                return
+
+            url = "https://sctapi.ftqq.com/%s.send" % server_key
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             title = "[桌面时钟] 预警配置已同步更新"
             desp = (
@@ -671,16 +679,24 @@ class PriceAlertDialog(QDialog):
                 "**当前所有预警列表**：\n%s\n"
                 "> 云端监控进程将在下一轮（60秒内）自动应用最新规则。"
             ) % (now_str, len(alerts), alerts_summary)
-            if server_key:
-                try:
-                    requests.post(url, data={"title": title, "desp": desp}, timeout=5)
-                except Exception as sc_err:
-                    log_error(sc_err, "ServerChanRequest")
 
-            dlg = SilentTipDialog("云端同步与微信提醒成功", "最新的价格预警配置已成功处理，并已通过微信发送了同步通知！", self)
-            dlg.exec_()
+            response = requests.post(url, data={"title": title, "desp": desp}, timeout=10)
+            if response.status_code == 200:
+                res_json = response.json()
+                if res_json.get("code") == 0:
+                    dlg = SilentTipDialog("云端同步与微信提醒成功", "最新的价格预警配置已成功处理，并已通过微信成功发送通知！", self)
+                    dlg.exec_()
+                else:
+                    err_msg = res_json.get("message", "未知错误")
+                    dlg = SilentTipDialog("微信推送失败", f"Server酱返回错误：\n{err_msg}", self)
+                    dlg.exec_()
+            else:
+                dlg = SilentTipDialog("微信推送失败", f"网络请求异常，状态码：{response.status_code}", self)
+                dlg.exec_()
+
         except Exception as e:
-            dlg = SilentTipDialog("同步失败", "推送或发送微信通知失败：\n%s" % e, self)
+            log_error(e, "SyncAlertsToCloud")
+            dlg = SilentTipDialog("同步失败", "推送或发送微信通知异常：\n%s" % e, self)
             dlg.exec_()
 
 
@@ -1553,6 +1569,14 @@ class ClockWindow(QWidget):
                     theme_idx = idx
                     break
 
+        old_cfg = {}
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, "r", encoding="utf-8") as sf:
+                    old_cfg = json.load(sf)
+            except Exception:
+                pass
+
         data = {
             "theme_index": theme_idx,
             "opacity": self.windowOpacity(),
@@ -1567,14 +1591,9 @@ class ClockWindow(QWidget):
             "calc_comm_rate": self.saved_calc_params.get("comm_rate", 0.0090)
         }
 
-        if os.path.exists(settings_file):
-            try:
-                with open(settings_file, "r", encoding="utf-8") as sf:
-                    old_cfg = json.load(sf)
-                    if "server_chan_key" in old_cfg:
-                        data["server_chan_key"] = old_cfg["server_chan_key"]
-            except Exception:
-                pass
+        existing_key = old_cfg.get("server_chan_key", "") or old_cfg.get("server_key", "")
+        if existing_key:
+            data["server_chan_key"] = existing_key
 
         try:
             os.makedirs(CACHE_DIR, exist_ok=True)
