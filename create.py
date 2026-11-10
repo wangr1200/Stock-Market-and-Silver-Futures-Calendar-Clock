@@ -968,16 +968,25 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                                     p = safe_float(vals[4], 0.0)
                                 if p > 10:
                                     latest = p
-                                    settle_price = 0.0
-                                    for idx in [13, 14, 4, 2, 1]:
-                                        s_val = safe_float(vals[idx], 0.0)
+                                    prev_settle = 0.0
+                                    if len(vals) > 10:
+                                        s_val = safe_float(vals[10], 0.0)
                                         if 10 < s_val < 999999 and abs(s_val - latest) < latest * 0.2:
-                                            settle_price = s_val
-                                            break
-                                    if settle_price <= 0:
-                                        settle_price = latest
-                                    change = latest - settle_price
-                                    chg_pct_val = (change / settle_price * 100.0) if settle_price > 0 else 0.0
+                                            prev_settle = s_val
+                                    
+                                    if prev_settle <= 0:
+                                        for idx in [9, 5, 13, 14, 4, 2, 1]:
+                                            if len(vals) > idx:
+                                                s_val = safe_float(vals[idx], 0.0)
+                                                if 10 < s_val < 999999 and abs(s_val - latest) < latest * 0.2:
+                                                    prev_settle = s_val
+                                                    break
+                                                    
+                                    if prev_settle <= 0:
+                                        prev_settle = latest
+                                        
+                                    change = latest - prev_settle
+                                    chg_pct_val = (change / prev_settle * 100.0) if prev_settle > 0 else 0.0
                                     contract_name = str(vals[12]) if len(vals) > 12 and vals[12] else (PREFIX_UP + '0')
                                     break
             except Exception:
@@ -992,11 +1001,6 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                         jdata = resp.json()
                         edata = jdata.get('data')
                         if edata:
-                            if is_gold:
-                                try:
-                                    print(json.dumps(edata, ensure_ascii=False, indent=2))
-                                except Exception:
-                                    pass
                             p = safe_float(edata.get('f43', 0), 0.0)
                             if p > 10:
                                 latest = p / 100.0 if p > 1000 else p
@@ -1040,16 +1044,22 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                                     p = safe_float(vals[4], 0.0)
                                 if p > 10:
                                     latest = p
-                                    settle_price = 0.0
-                                    for idx in [13, 14, 4, 2, 1]:
-                                        s_val = safe_float(vals[idx], 0.0)
+                                    prev_settle = 0.0
+                                    if len(vals) > 10:
+                                        s_val = safe_float(vals[10], 0.0)
                                         if 10 < s_val < 999999 and abs(s_val - latest) < latest * 0.2:
-                                            settle_price = s_val
-                                            break
-                                    if settle_price <= 0:
-                                        settle_price = latest
-                                    change = latest - settle_price
-                                    chg_pct_val = (change / settle_price * 100.0) if settle_price > 0 else 0.0
+                                            prev_settle = s_val
+                                    if prev_settle <= 0:
+                                        for idx in [9, 5, 13, 14, 4, 2, 1]:
+                                            if len(vals) > idx:
+                                                s_val = safe_float(vals[idx], 0.0)
+                                                if 10 < s_val < 999999 and abs(s_val - latest) < latest * 0.2:
+                                                    prev_settle = s_val
+                                                    break
+                                    if prev_settle <= 0:
+                                        prev_settle = latest
+                                    change = latest - prev_settle
+                                    chg_pct_val = (change / prev_settle * 100.0) if prev_settle > 0 else 0.0
                                     contract_name = str(vals[12]) if len(vals) > 12 and vals[12] else (PREFIX_UP + '0')
                                     break
             except Exception:
