@@ -35,10 +35,10 @@ def safe_float(val, default=0.0):
     except Exception:
         return default
 
-DEFAULT_AG_CONTRACT = "AG2702"
-DEFAULT_AU_CONTRACT = "AU2612"
-DEFAULT_AG_PRICE = 12632.0
-DEFAULT_AU_PRICE = 882.76
+DEFAULT_AG_CONTRACT = "AG0"
+DEFAULT_AU_CONTRACT = "AU0"
+DEFAULT_AG_PRICE = 12666.0
+DEFAULT_AU_PRICE = 885.48
 DEFAULT_AG_MULTIPLIER = 15.0
 DEFAULT_AU_MULTIPLIER = 1000.0
 
@@ -112,7 +112,8 @@ def check_is_market_open(now=None, market_type="AG"):
             return False
 
     if market_type == "AG":
-        if (datetime.time(9, 0) <= t <= datetime.time(11, 30)) or \
+        if (datetime.time(9, 0) <= t <= datetime.time(10, 15)) or \
+           (datetime.time(10, 30) <= t <= datetime.time(11, 30)) or \
            (datetime.time(13, 30) <= t <= datetime.time(15, 0)) or \
            (t >= datetime.time(21, 0) or t <= datetime.time(2, 30)):
             return True
@@ -202,7 +203,7 @@ COLOR_THEMES = {
 }
 
 MACRO_EVENTS = [
-    {"name": "10月 CPI数据 (11/12公布)", "time": datetime.datetime(2026, 11, 12, 21, 30)},
+    {"name": "11月 CPI数据 (11/12公布)", "time": datetime.datetime(2026, 11, 12, 21, 30)},
     {"name": "11月 非农报告 (12/04公布)", "time": datetime.datetime(2026, 12, 4, 21, 30)},
     {"name": "12月 FOMC 议息会议 (12/10)", "time": datetime.datetime(2026, 12, 10, 3, 0)},
     {"name": "11月 CPI数据 (12/10公布)", "time": datetime.datetime(2026, 12, 10, 21, 30)},
@@ -349,7 +350,7 @@ class SilentTipDialog(QDialog):
 
 
 class AddPriceAlertDialog(QDialog):
-    def __init__(self, current_contract="AG2702", current_price=12632.0, parent=None):
+    def __init__(self, current_contract="AG0", current_price=12666.0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("添加价格预警")
         self.resize(340, 240)
@@ -369,8 +370,8 @@ class AddPriceAlertDialog(QDialog):
         form = QFormLayout()
 
         self.contract_combo = QComboBox()
-        ag_c = getattr(self.parent_window, 'ag_contract', 'AG2702') if self.parent_window else "AG2702"
-        au_c = getattr(self.parent_window, 'au_contract', 'AU2612') if self.parent_window else "AU2612"
+        ag_c = getattr(self.parent_window, 'ag_contract', 'AG0') if self.parent_window else "AG0"
+        au_c = getattr(self.parent_window, 'au_contract', 'AU0') if self.parent_window else "AU0"
         self.contract_combo.addItems(["沪银 (%s)" % ag_c, "沪金 (%s)" % au_c])
         if "AU" in self.default_contract.upper() or "沪金" in self.default_contract:
             self.contract_combo.setCurrentIndex(1)
@@ -432,21 +433,21 @@ class AddPriceAlertDialog(QDialog):
 
     def on_contract_changed(self, idx):
         if idx == 0:
-            self.contract = getattr(self.parent_window, 'ag_contract', 'AG2702') if self.parent_window else "AG2702"
-            p = 12632.0
+            self.contract = getattr(self.parent_window, 'ag_contract', 'AG0') if self.parent_window else "AG0"
+            p = 12666.0
             if self.parent_window and hasattr(self.parent_window, 'silver_data'):
                 try:
-                    p = safe_float(self.parent_window.silver_data.get("price", 12632.0))
+                    p = safe_float(self.parent_window.silver_data.get("price", 12666.0))
                 except Exception:
                     pass
             self.price_spin.setValue(p)
             self.hint_lbl.setText("当前最新参考价: %.1f" % p)
         else:
-            self.contract = getattr(self.parent_window, 'au_contract', 'AU2612') if self.parent_window else "AU2612"
-            p = 882.76
+            self.contract = getattr(self.parent_window, 'au_contract', 'AU0') if self.parent_window else "AU0"
+            p = 885.48
             if self.parent_window and hasattr(self.parent_window, 'gold_data'):
                 try:
-                    p = safe_float(self.parent_window.gold_data.get("price", 882.76))
+                    p = safe_float(self.parent_window.gold_data.get("price", 885.48))
                 except Exception:
                     pass
             self.price_spin.setValue(p)
@@ -455,9 +456,9 @@ class AddPriceAlertDialog(QDialog):
     def on_ok(self):
         idx = self.contract_combo.currentIndex()
         if idx == 0:
-            self.contract = getattr(self.parent_window, 'ag_contract', 'AG2702') if self.parent_window else "AG2702"
+            self.contract = getattr(self.parent_window, 'ag_contract', 'AG0') if self.parent_window else "AG0"
         else:
-            self.contract = getattr(self.parent_window, 'au_contract', 'AU2612') if self.parent_window else "AU2612"
+            self.contract = getattr(self.parent_window, 'au_contract', 'AU0') if self.parent_window else "AU0"
             
         cond_type = "up" if self.cond_combo.currentIndex() == 0 else "down"
         target_val = self.price_spin.value()
@@ -581,12 +582,12 @@ class PriceAlertDialog(QDialog):
             pass
 
     def open_add_alert(self):
-        curr_contract = "AG2702"
-        curr_price = 12632.0
+        curr_contract = "AG0"
+        curr_price = 12666.0
         if self.parent_window and hasattr(self.parent_window, 'silver_data'):
-            curr_contract = self.parent_window.silver_data.get("contract", "AG2702")
+            curr_contract = self.parent_window.silver_data.get("contract", "AG0")
             try:
-                curr_price = safe_float(self.parent_window.silver_data.get("price", 12632.0))
+                curr_price = safe_float(self.parent_window.silver_data.get("price", 12666.0))
             except Exception as e:
                 log_error(e, "PriceAlert Add")
 
@@ -914,7 +915,7 @@ class SettingsDialog(QDialog):
                 accent=theme["accent"]
             )
         else:
-            color = QColorDialog.getColor(QColor(self.parent_window.current_time_color), self, "选择自定义数字显示颜色")
+            color = QColorDialog.getColor(QColor(self.parent_window.current_time_color), self, "选择自定义数字颜色")
             if color.isValid():
                 self.parent_window.apply_theme(
                     bg_color=self.parent_window.current_bg_color,
@@ -940,363 +941,151 @@ class BaseQuoteSource:
         raise NotImplementedError
 
 
-class AkShareQuoteSource(BaseQuoteSource):
+class DomesticCommodityQuoteSource(BaseQuoteSource):
     def get_quote(self, target_type: str) -> dict:
+        import time, requests
+        is_gold = ('金' in target_type or 'AU' in target_type.upper())
+        prefix = 'au' if is_gold else 'ag'
+        PREFIX_UP = 'AU' if is_gold else 'AG'
+        latest, open_price, change, chg_pct_val, volume, open_interest, contract_name = 0.0, 0.0, 0.0, 0.0, '467827', '254876', (PREFIX_UP + '0')
         try:
-            import akshare as ak
-            prefix = "AG" if target_type == "沪银" else "AU"
-            
-            df = None
-            try:
-                df = ak.futures_zh_spot(symbol=prefix + "0")
-            except Exception:
-                try:
-                    df = ak.futures_main_sina(symbol=prefix)
-                except Exception:
-                    pass
-            
-            if df is not None and not df.empty:
-                for _, row in df.iterrows():
-                    symbol_str = str(row.get("symbol", "") or row.get("代码", "")).upper()
-                    name_str = str(row.get("name", "") or row.get("名称", ""))
-                    
-                    if prefix in symbol_str or prefix in name_str or prefix.lower() in symbol_str.lower():
-                        latest = safe_float(
-                            row.get("trade", 0) or 
-                            row.get("price", 0) or 
-                            row.get("最新价", 0) or 
-                            row.get("最新", 0)
-                        )
-                        pre_settle = safe_float(
-                            row.get("settlement", 0) or 
-                            row.get("pre_settle", 0) or 
-                            row.get("昨结算", 0) or 
-                            row.get("结算价", 0)
-                        )
-                        
-                        if latest <= 0:
-                            continue
-                        if pre_settle <= 0:
-                            pre_settle = latest
-                            
-                        change = latest - pre_settle
-                        change_pct = (change / pre_settle * 100.0) if pre_settle > 0 else 0.0
-                        
-                        contract_name = str(row.get("symbol", "") or row.get("代码", "")).upper()
-                        if not contract_name or (prefix not in contract_name):
-                            contract_name = "AG2702" if prefix == "AG" else "AU2612"
-                            
-                        return {
-                            "contract": contract_name,
-                            "price": "%.2f" % latest if prefix == "AU" else "%.0f" % latest,
-                            "change": "%+.2f" % change if prefix == "AU" else "%+.1f" % change,
-                            "change_pct": "%+.2f%%" % change_pct,
-                            "volume": str(row.get("volume", 0) or row.get("成交量", "10000")),
-                            "open_interest": str(row.get("hold", 0) or row.get("持仓量", "50000")),
-                            "bid1_p": "%.2f" % latest,
-                            "bid1_v": "1",
-                            "ask1_p": "%.2f" % latest,
-                            "ask1_v": "1"
-                        }
+            ts = int(time.time() * 1000)
+            url = f'https://hq.sinajs.cn/list=nf_{PREFIX_UP}0,nf_{prefix}0&_={ts}'
+            headers = {'Referer': 'https://finance.sina.com.cn', 'User-Agent': 'Mozilla/5.0'}
+            r = requests.get(url, headers=headers, timeout=2.5)
+            if r.status_code == 200:
+                r.encoding = 'gbk'
+                for line in r.text.split(';'):
+                    if '="' in line:
+                        vals = line.split('="')[1].strip('"\n').split(',')
+                        if len(vals) > 12:
+                            p = safe_float(vals[6], 0.0)
+                            if p > 50:
+                                latest = p
+                                raw_open = safe_float(vals[1], 0.0)
+                                if raw_open > 50:
+                                    open_price = raw_open
+                                open_interest = str(vals[10]) if len(vals) > 10 else '254876'
+                                volume = str(vals[11]) if len(vals) > 11 else '467827'
+                                contract_name = str(vals[12]) if len(vals) > 12 and vals[12] else (PREFIX_UP + '0')
+                                break
         except Exception:
             pass
-        raise ValueError("AkShare quote fetch failed")
+        if latest <= 0 or open_price <= 0:
+            try:
+                for secid in [f'113.{PREFIX_UP}0', f'113.{prefix}0', f'113.{PREFIX_UP}9999']:
+                    url_em = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f46,f47,f48'
+                    resp = requests.get(url_em, headers={'Referer': 'https://quote.eastmoney.com', 'User-Agent': 'Mozilla/5.0'}, timeout=2.5)
+                    if resp.status_code == 200:
+                        jdata = resp.json()
+                        edata = jdata.get('data')
+                        if edata:
+                            p = safe_float(edata.get('f43', 0), 0.0)
+                            if p > 50:
+                                if latest <= 0:
+                                    latest = p / 100.0 if p > 100000 else p
+                                raw_o = safe_float(edata.get('f46', 0), 0.0)
+                                if raw_o > 50:
+                                    open_price = raw_o / 100.0 if raw_o > 100000 else raw_o
+                                volume = str(edata.get('f47', '467827'))
+                                open_interest = str(edata.get('f48', '254876'))
+                                contract_name = secid.split('.')[1].upper()
+                                break
+            except Exception:
+                pass
+        if latest > 0:
+            if open_price <= 0 or abs(open_price - latest) > latest * 0.2:
+                open_price = latest
+            change = latest - open_price
+            chg_pct_val = (change / open_price * 100.0) if open_price > 0 else 0.0
+            change_pct = f'{chg_pct_val:+.2f}%'
+            return {
+                'contract': contract_name,
+                'price': ('%.2f' % latest) if is_gold else ('%.1f' % latest),
+                'change': ('%+.2f' % change) if is_gold else ('%+.1f' % change),
+                'change_pct': change_pct,
+                'volume': volume,
+                'open_interest': open_interest
+            }
+        return {}
 
 class InternationalQuoteSource(BaseQuoteSource):
     def get_quote(self, target_type: str) -> dict:
-        import time
-        import random
         is_gold = ("金" in target_type or "XAU" in target_type.upper())
-        
+        sina_sym = "hf_XAU" if is_gold else "hf_XAG"
         try:
-            secid = "106.XAUUSD" if is_gold else "106.XAGUSD"
-            url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f57,f58,f169,f170,f46,f44,f51,f52,f50,f47,f60,f48,f168,f161,f162,f163"
-            headers = {"Referer": "https://quote.eastmoney.com", "User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=3.0)
-            if resp.status_code == 200:
-                res_json = resp.json()
-                data = res_json.get("data")
-                if data:
-                    div = 10000.0 if is_gold else 1000.0
-                    latest = safe_float(data.get('f43', 0)) / div
-                    if latest <= 0:
-                        latest = safe_float(data.get('f44', 0)) / div
-                    if latest > 0:
-                        pre_close = safe_float(data.get('f60', 0)) / div
-                        if pre_close <= 0:
-                            pre_close = latest * (1.0 - 0.0133 if is_gold else 1.0 - 0.0215)
-                        change = latest - pre_close
-                        change_pct_val = (change / pre_close * 100.0) if pre_close > 0 else (1.33 if is_gold else 2.15)
-                        
-                        change_pct_str = f"+{change_pct_val:.2f}%" if change_pct_val >= 0 else f"{change_pct_val:.2f}%"
-                        change_str = f"+{change:.4f}" if change >= 0 else f"{change:.4f}"
-                        
-                        if is_gold:
-                            return {
-                                "contract": "XAUUSD",
-                                "price": "%.4f" % latest,
-                                "change": change_str,
-                                "change_pct": change_pct_str,
-                                "volume": "15000",
-                                "open_interest": "60000"
-                            }
-                        else:
-                            return {
-                                "contract": "AGUSDO",
-                                "price": "%.3f" % latest,
-                                "change": change_str,
-                                "change_pct": change_pct_str,
-                                "volume": "15000",
-                                "open_interest": "60000"
-                            }
-        except Exception:
-            pass
-
-        try:
-            sina_sym = "hf_XAU" if is_gold else "hf_XAG"
             url = f"https://hq.sinajs.cn/list={sina_sym}"
             headers = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=2.0)
+            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=3.0)
             if resp.status_code == 200 and '="' in resp.text:
                 parts = resp.text.split('="')
                 if len(parts) > 1:
-                    data_str = parts[1].strip('";\n')
-                    vals = data_str.split(',')
-                    if len(vals) > 0:
+                    vals = parts[1].strip('";\n').split(',')
+                    if len(vals) > 1 and safe_float(vals[0], 0) > 0:
                         price_val = safe_float(vals[0], 0)
-                        if price_val > 0:
-                            prev_close = safe_float(vals[7], 0) if len(vals) > 7 else 0.0
-                            change = safe_float(vals[8], 0) if len(vals) > 8 else 0.0
-                            if prev_close <= 0:
-                                prev_close = price_val - change
-                            change_pct_val = (change / prev_close * 100.0) if prev_close > 0 else 0.0
-                            if len(vals) > 9:
-                                raw_pct = str(vals[9]).replace('%', '').strip()
-                                parsed_pct = safe_float(raw_pct, 999.0)
-                                if parsed_pct != 999.0 and abs(parsed_pct) < 20.0:
-                                    change_pct_val = parsed_pct
-                                    change = price_val * (change_pct_val / 100.0)
-
-                            if abs(change_pct_val) < 0.001:
-                                change_pct_val = 1.33 if is_gold else 2.15
-                                change = price_val * (change_pct_val / 100.0)
-
-                            change_pct_str = f"+{change_pct_val:.2f}%" if change_pct_val >= 0 else f"{change_pct_val:.2f}%"
-                            change_str = f"+{change:.2f}" if change >= 0 else f"{change:.2f}"
+                        open_p = safe_float(vals[8], 0) if len(vals) > 8 else 0.0
+                        if open_p <= 0 and len(vals) > 7:
+                            open_p = safe_float(vals[7], 0)
+                        if open_p <= 0:
+                            open_p = price_val
                             
-                            if is_gold:
-                                return {
-                                    "contract": "XAUUSD",
-                                    "price": "%.4f" % price_val,
-                                    "change": change_str,
-                                    "change_pct": change_pct_str,
-                                    "volume": "15000",
-                                    "open_interest": "60000"
-                                }
-                            else:
-                                return {
-                                    "contract": "AGUSDO",
-                                    "price": "%.3f" % price_val,
-                                    "change": change_str,
-                                    "change_pct": change_pct_str,
-                                    "volume": "15000",
-                                    "open_interest": "60000"
-                                }
+                        change = price_val - open_p
+                        change_pct = (change / open_p * 100.0) if open_p > 0 else 0.0
+                        
+                        return {
+                            "contract": "XAUUSD" if is_gold else "AGUSDO",
+                            "price": ("%.2f" % price_val) if is_gold else ("%.3f" % price_val),
+                            "change": ("%+.2f" % change) if is_gold else ("%+.3f" % change),
+                            "change_pct": "%+.2f%%" % change_pct,
+                            "volume": "35000",
+                            "open_interest": "100000"
+                        }
         except Exception:
             pass
 
-        t_tick = int(time.time() * 10)
-        random.seed(t_tick + (13 if is_gold else 37))
-        
-        if is_gold:
-            base_p = 4123.9400
-            fluct = (random.random() - 0.48) * 0.05
-            latest = base_p + fluct
-            return {
-                "contract": "XAUUSD",
-                "price": "%.4f" % latest,
-                "change": "+54.12",
-                "change_pct": "+1.33%",
-                "volume": "15000",
-                "open_interest": "60000"
-            }
-        else:
-            base_p = 52.727
-            fluct = (random.random() - 0.48) * 0.002
-            latest = base_p + fluct
-            return {
-                "contract": "AGUSDO",
-                "price": "%.3f" % latest,
-                "change": "+1.110",
-                "change_pct": "+2.15%",
-                "volume": "15000",
-                "open_interest": "60000"
-            }
-
-
-class SinaQuoteSource(BaseQuoteSource):
-    def get_quote(self, target_type: str) -> dict:
-        import time
-        import re
-        prefix = "AG" if target_type == "沪银" else "AU"
-        
         try:
-            em_source = EastMoneyQuoteSource()
-            return em_source.get_quote(target_type)
-        except Exception:
-            pass
-
-        headers = {
-            "Referer": "https://finance.sina.com.cn",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        timestamp = int(time.time() * 1000)
-        symbols = ["nf_%s0" % prefix.lower(), "nf_%s" % prefix.lower()]
-        url = "https://hq.sinajs.cn/list=%s&_t=%d" % (','.join(symbols), timestamp)
-        
-        try:
-            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=4)
+            secid = "106.XAUUSD" if is_gold else "106.XAGUSD"
+            url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f46,f57,f58,f169,f170,f60,f44"
+            headers = {"Referer": "https://quote.eastmoney.com", "User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=3.0)
             if resp.status_code == 200:
-                for line in resp.text.split(';'):
-                    if 'hq_str_' in line and '="' in line:
-                        parts_split = line.split('="')
-                        if len(parts_split) > 1:
-                            data_str = parts_split[1].strip('"')
-                            if data_str:
-                                parts = data_str.split(',')
-                                if len(parts) >= 12:
-                                    try:
-                                        num_parts = [safe_float(p, 0.0) for p in parts if p.replace('.','',1).isdigit()]
-                                        
-                                        latest = 0.0
-                                        pre_settle = 0.0
-                                        
-                                        if prefix == "AU":
-                                            for p in parts:
-                                                val = safe_float(p, 0.0)
-                                                if 300.0 < val < 2000.0:
-                                                    latest = val
-                                                    break
-                                            if latest <= 0 and len(parts) > 4:
-                                                latest = safe_float(parts[4], 0.0)
-                                            if len(parts) > 13:
-                                                pre_settle = safe_float(parts[13], 0.0)
-                                            if pre_settle <= 0 and len(parts) > 9:
-                                                pre_settle = safe_float(parts[9], 0.0)
-                                        else:
-                                            for p in parts:
-                                                val = safe_float(p, 0.0)
-                                                if 3000.0 < val < 50000.0:
-                                                    latest = val
-                                                    break
-                                            if latest <= 0 and len(parts) > 4:
-                                                latest = safe_float(parts[4], 0.0)
-                                            if len(parts) > 13:
-                                                pre_settle = safe_float(parts[13], 0.0)
-                                            if pre_settle <= 0 and len(parts) > 9:
-                                                pre_settle = safe_float(parts[9], 0.0)
-
-                                        if latest <= 0:
-                                            continue
-                                        if pre_settle <= 0:
-                                            pre_settle = latest
-
-                                        change = latest - pre_settle
-                                        change_pct = (change / pre_settle * 100.0) if pre_settle > 0 else 0.0
-
-                                        contract_name = "AG2702" if prefix == "AG" else "AU2612"
-                                        if len(parts) > 14 and parts[14]:
-                                            contract_name = str(parts[14]).upper()
-
-                                        return {
-                                            "contract": contract_name,
-                                            "price": "%.2f" % latest if prefix == "AU" else "%.0f" % latest,
-                                            "change": "%+.2f" % change if prefix == "AU" else "%+.1f" % change,
-                                            "change_pct": "%+.2f%%" % change_pct,
-                                            "volume": str(parts[8] if len(parts) > 8 else "10000"),
-                                            "open_interest": str(parts[10] if len(parts) > 10 else "50000"),
-                                            "bid1_p": "%.2f" % latest,
-                                            "bid1_v": "1",
-                                            "ask1_p": "%.2f" % latest,
-                                            "ask1_v": "1"
-                                        }
-                                    except Exception:
-                                        continue
+                data = resp.json().get("data")
+                if data:
+                    raw_latest = safe_float(data.get('f43', 0))
+                    if raw_latest <= 0:
+                        raw_latest = safe_float(data.get('f44', 0))
+                    if raw_latest > 0:
+                        latest = raw_latest / 100.0 if raw_latest > 10000 else raw_latest
+                        raw_open = safe_float(data.get('f46', 0))
+                        open_p = raw_open / 100.0 if raw_open > 10000 else raw_open
+                        if open_p <= 0:
+                            open_p = latest
+                        change = latest - open_p
+                        change_pct = (change / open_p * 100.0) if open_p > 0 else 0.0
+                        
+                        return {
+                            "contract": "XAUUSD" if is_gold else "AGUSDO",
+                            "price": ("%.2f" % latest) if is_gold else ("%.3f" % latest),
+                            "change": ("%+.2f" % change) if is_gold else ("%+.3f" % change),
+                            "change_pct": "%+.2f%%" % change_pct,
+                            "volume": "30000",
+                            "open_interest": "90000"
+                        }
         except Exception:
             pass
-            
-        raise ValueError("Sina quote fetch failed")
 
-
-class EastMoneyQuoteSource(BaseQuoteSource):
-    def get_quote(self, target_type: str) -> dict:
-        prefix = "AG" if target_type == "沪银" else "AU"
-        secid = "114.AG0" if prefix == "AG" else "114.AU0"
-            
-        url = "https://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f43,f57,f58,f169,f170,f46,f44,f51,f52,f50,f47,f60,f48,f168,f161,f162,f163" % secid
-        headers = {"Referer": "https://quote.eastmoney.com", "User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=4)
-        if resp.status_code == 200:
-            res_json = resp.json()
-            data = res_json.get("data")
-            if data:
-                latest = safe_float(data.get('f43', 0)) / 100.0
-                if latest <= 0:
-                    raise ValueError("EastMoney invalid price")
-                
-                pre_settle = safe_float(data.get('f60', 0)) / 100.0
-                if pre_settle <= 0:
-                    pre_settle = safe_float(data.get('f168', 0)) / 100.0
-                if pre_settle <= 0:
-                    pre_settle = latest
-                
-                change = latest - pre_settle
-                change_pct = (change / pre_settle * 100.0) if pre_settle > 0 else 0.0
-                
-                if prefix == "AU":
-                    price_str = "%.2f" % latest
-                    change_str = "%+.2f" % change
-                else:
-                    price_str = "%.0f" % latest
-                    change_str = "%+.1f" % change
-
-                contract_name = "AG2702" if prefix == "AG" else "AU2612"
-                return {
-                    "contract": contract_name,
-                    "price": price_str,
-                    "change": change_str,
-                    "change_pct": "%+.2f%%" % change_pct,
-                    "volume": str(data.get('f47', 10000)),
-                    "open_interest": str(data.get('f48', 50000)),
-                    "bid1_p": price_str,
-                    "bid1_v": "1",
-                    "ask1_p": price_str,
-                    "ask1_v": "1"
-                }
-        raise ValueError("EastMoney quote fetch failed")
-
-QUOTE_SOURCES = {
-    "AkShare (量化数据源)": AkShareQuoteSource(),
-    "新浪财经 (Sina)": SinaQuoteSource(),
-    "东方财富 (EastMoney)": EastMoneyQuoteSource(),
-}
+        return {}
 
 
 class CommodityQuoteWorker(QObject):
     data_fetched = pyqtSignal(dict)
     finished = pyqtSignal()
 
-    def __init__(self, target_type="沪银", data_source="新浪财经 (Sina)"):
+    def __init__(self, target_type="沪银", data_source="多源实时聚合"):
         super().__init__()
         self.target_type = target_type
         self.data_source = data_source
         self.running = True
-
-    def set_target(self, target_type):
-        self.target_type = target_type
-
-    def set_data_source(self, data_source):
-        self.data_source = data_source
 
     def stop(self):
         self.running = False
@@ -1308,106 +1097,24 @@ class CommodityQuoteWorker(QObject):
         last_valid_info = None
         
         while self.running:
-            now = datetime.datetime.now()
-            m_type = "AG" if self.target_type == "沪银" else "AU"
-            is_open = check_is_market_open(now, market_type=m_type)
-            
             is_intl = ("伦敦" in self.target_type or "XAU" in self.target_type.upper() or "AGUS" in self.target_type.upper())
-            if is_intl:
-                is_open = True
-
-            if not is_open:
-                if last_valid_info is None:
-                    try:
-                        if "伦敦" in self.target_type or "XAU" in self.target_type.upper():
-                            source = InternationalQuoteSource()
-                        else:
-                            source = QUOTE_SOURCES.get(self.data_source, SinaQuoteSource())
-                        info = source.get_quote(self.target_type)
-                        if info and safe_float(info.get("price", "0")) > 0:
-                            last_valid_info = info
-                    except Exception:
-                        try:
-                            fallback_source = EastMoneyQuoteSource()
-                            info = fallback_source.get_quote(self.target_type)
-                            if info and safe_float(info.get("price", "0")) > 0:
-                                last_valid_info = info
-                        except Exception:
-                            pass
-                
-                if last_valid_info is not None:
-                    self.data_fetched.emit(last_valid_info)
-                else:
-                    if self.target_type == "沪银":
-                        default_p = "12632"
-                        default_chg = "+55"
-                        default_pct = "+0.45%"
-                    else:
-                        default_p = "882.76"
-                        default_chg = "+3.50"
-                        default_pct = "+0.40%"
-
-                    static_info = {
-                        "contract": "AG2702" if self.target_type == "沪银" else "AU2612",
-                        "price": default_p,
-                        "change": default_chg,
-                        "change_pct": default_pct,
-                        "volume": "0",
-                        "open_interest": "0",
-                        "bid1_p": default_p,
-                        "bid1_v": "0",
-                        "ask1_p": default_p,
-                        "ask1_v": "0"
-                    }
-                    self.data_fetched.emit(static_info)
-                
-                for _ in range(10):
-                    if not self.running:
-                        break
-                    time.sleep(0.1)
-                continue
-
-            fetched_ok = False
             try:
-                if is_intl:
-                    source = InternationalQuoteSource()
-                else:
-                    source = QUOTE_SOURCES.get(self.data_source, SinaQuoteSource())
+                source = InternationalQuoteSource() if is_intl else DomesticCommodityQuoteSource()
                 info = source.get_quote(self.target_type)
                 if info and safe_float(info.get("price", "0")) > 0:
                     last_valid_info = info
                     self.data_fetched.emit(info)
-                    fetched_ok = True
                     retry_count = 0
-            except Exception as e:
-                try:
-                    if is_intl:
-                        fallback_source = InternationalQuoteSource()
-                    else:
-                        fallback_source = EastMoneyQuoteSource()
-                    info = fallback_source.get_quote(self.target_type)
-                    if info and safe_float(info.get("price", "0")) > 0:
-                        last_valid_info = info
-                        self.data_fetched.emit(info)
-                        fetched_ok = True
-                        retry_count = 0
-                except Exception as ex:
-                    retry_count += 1
+                elif last_valid_info is not None:
+                    self.data_fetched.emit(last_valid_info)
+            except Exception:
+                retry_count += 1
+                if last_valid_info is not None:
+                    self.data_fetched.emit(last_valid_info)
 
-            if not fetched_ok and last_valid_info is not None:
-                self.data_fetched.emit(last_valid_info)
-            elif is_intl:
-                try:
-                    intl_source = InternationalQuoteSource()
-                    info = intl_source.get_quote(self.target_type)
-                    if info:
-                        self.data_fetched.emit(info)
-                except Exception:
-                    pass
-
-            sleep_sec = 1.0
+            sleep_sec = 3.0
             if retry_count > 3:
-                sleep_sec = min(10.0, 1.0 * (2 ** (retry_count - 3)))
+                sleep_sec = min(10.0, 2.0 * (2 ** (retry_count - 3)))
             
             for _ in range(int(sleep_sec * 10)):
                 if not self.running:
@@ -1471,11 +1178,7 @@ class ProfitLossCalculatorDialog(QDialog):
             saved_dir_idx = self.parent_window.saved_calc_params.get("dir_idx", 1)
         self.dir_combo.setCurrentIndex(saved_dir_idx)
 
-        lbl1 = QLabel("多空头寸:")
-        lbl1.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: bold;")
-        form.addRow(lbl1, self.dir_combo)
-
-        default_p = 12337.0 if saved_comm_idx == 0 else 882.76
+        default_p = 12666.0 if saved_comm_idx == 0 else 885.48
         if self.parent_window and hasattr(self.parent_window, 'saved_calc_params'):
             saved_p = self.parent_window.saved_calc_params.get("open_price", None)
             if saved_p is not None:
@@ -1580,9 +1283,9 @@ class ProfitLossCalculatorDialog(QDialog):
 
     def on_commodity_combo_changed(self, idx):
         if idx == 0:
-            self.open_price_spin.setValue(12337.0)
+            self.open_price_spin.setValue(12666.0)
         else:
-            self.open_price_spin.setValue(882.76)
+            self.open_price_spin.setValue(885.48)
         self.calculate()
         self.save_current_params()
 
@@ -1597,13 +1300,13 @@ class ProfitLossCalculatorDialog(QDialog):
             mult = 15.0 if comm_idx == 0 else 1000.0
             mult_unit = "千克/手" if comm_idx == 0 else "克/手"
 
-            curr_p = 12632.0 if comm_type == "沪银" else 882.76
+            curr_p = 12666.0 if comm_type == "沪银" else 885.48
             if self.parent_window:
                 try:
                     if comm_type == "沪银" and hasattr(self.parent_window, 'silver_data'):
-                        curr_p = safe_float(self.parent_window.silver_data.get('price', 12632.0), 12632.0)
+                        curr_p = safe_float(self.parent_window.silver_data.get('price', 12666.0), 12666.0)
                     elif comm_type == "沪金" and hasattr(self.parent_window, 'gold_data'):
-                        curr_p = safe_float(self.parent_window.gold_data.get('price', 882.76), 882.76)
+                        curr_p = safe_float(self.parent_window.gold_data.get('price', 885.48), 885.48)
                 except Exception:
                     pass
 
@@ -1617,18 +1320,18 @@ class ProfitLossCalculatorDialog(QDialog):
             single_rate = self.comm_spin.value() / 100.0
             round_rate = single_rate * 2.0
 
-            turnover = (open_p + curr_p) * mult * lots
-            total_commission = turnover * single_rate
+            open_turnover = open_p * mult * lots
+            total_commission = open_turnover * single_rate * 2.0
             net_pnl = gross_pnl - total_commission
 
             self.info_lbl.setText("当前%s参考价: %.1f  |  乘数: %d%s" % (comm_type, curr_p, int(mult), mult_unit))
             self.comm_fee_lbl.setText("来回佣金扣除: -%.1f 元 (双边费率: %.3f%%)" % (total_commission, round_rate*100))
 
             if net_pnl >= 0:
-                self.pnl_val_lbl.setText("净浮盈: +%.1f 元" % net_pnl)
+                self.pnl_val_lbl.setText(f"净浮盈: +{net_pnl:,.1f} 元")
                 self.pnl_val_lbl.setStyleSheet("color: #ef4444; font-size: 18px; font-weight: bold; border: none;")
             else:
-                self.pnl_val_lbl.setText("净浮亏: %.1f 元" % net_pnl)
+                self.pnl_val_lbl.setText(f"净浮亏: {net_pnl:,.1f} 元")
                 self.pnl_val_lbl.setStyleSheet("color: #22c55e; font-size: 18px; font-weight: bold; border: none;")
         except Exception as e:
             log_error(e, "CalculatorCalculate")
@@ -1691,7 +1394,7 @@ class ClockWindow(QWidget):
 
         calc_comm_idx = data.get("calc_comm_idx", 0)
         calc_dir = data.get("calc_dir_idx", 1)
-        calc_price = data.get("calc_open_price", 12337.0)
+        calc_price = data.get("calc_open_price", 12666.0)
         calc_lots = data.get("calc_lots", 1)
         calc_comm = data.get("calc_comm_rate", 0.0090)
         
@@ -1731,7 +1434,7 @@ class ClockWindow(QWidget):
             "pos_y": self.y(),
             "calc_comm_idx": self.saved_calc_params.get("comm_idx", 0),
             "calc_dir_idx": self.saved_calc_params.get("dir_idx", 1),
-            "calc_open_price": self.saved_calc_params.get("open_price", 12337.0),
+            "calc_open_price": self.saved_calc_params.get("open_price", 12666.0),
             "calc_lots": self.saved_calc_params.get("lots", 1),
             "calc_comm_rate": self.saved_calc_params.get("comm_rate", 0.0090)
         }
@@ -1760,26 +1463,42 @@ class ClockWindow(QWidget):
         self.current_card_bg = "#262b36"
         self.current_accent = "#0284c7"
 
-        self.saved_calc_params = {"comm_idx": 0, "dir_idx": 1, "open_price": 12337.0, "lots": 1, "comm_rate": 0.0090}
+        self.saved_calc_params = {"comm_idx": 0, "dir_idx": 1, "open_price": 12666.0, "lots": 1, "comm_rate": 0.0090}
         
-        self.ag_contract = "AG2702"
-        self.au_contract = "AU2612"
+        self.ag_contract = "AG0"
+        self.au_contract = "AU0"
         
         self.silver_data = {
-            "contract": "AG2702",
-            "price": "12632",
-            "change": "+55",
-            "change_pct": "+0.45%",
-            "volume": "0",
-            "open_interest": "0"
+            "contract": "AG0",
+            "price": "12687.0",
+            "change": "+77.0",
+            "change_pct": "+0.61%",
+            "volume": "293843",
+            "open_interest": "248773"
         }
         self.gold_data = {
-            "contract": "AU2612",
-            "price": "882.76",
-            "change": "+3.50",
-            "change_pct": "+0.40%",
-            "volume": "0",
-            "open_interest": "0"
+            "contract": "AU0",
+            "price": "882.28",
+            "change": "+5.00",
+            "change_pct": "+0.57%",
+            "volume": "102014",
+            "open_interest": "144747"
+        }
+        self.xau_data = {
+            "contract": "XAUUSD",
+            "price": "4105.58",
+            "change": "+36.42",
+            "change_pct": "+0.89%",
+            "volume": "25000",
+            "open_interest": "80000"
+        }
+        self.xag_data = {
+            "contract": "AGUSDO",
+            "price": "52.660",
+            "change": "+0.770",
+            "change_pct": "+1.48%",
+            "volume": "25000",
+            "open_interest": "80000"
         }
 
         self.init_ui()
@@ -1920,17 +1639,17 @@ class ClockWindow(QWidget):
         compact_layout.setContentsMargins(10, 8, 10, 8)
         compact_layout.setSpacing(4)
 
-        self.compact_pnl_val_lbl = QLabel("净浮亏: -4,458.7 元")
+        self.compact_pnl_val_lbl = QLabel("净浮盈: +0.0 元")
         self.compact_pnl_val_lbl.setStyleSheet("color: #22c55e; font-size: 16px; font-weight: bold; border: none; background: transparent;")
         self.compact_pnl_val_lbl.setAlignment(Qt.AlignCenter)
         compact_layout.addWidget(self.compact_pnl_val_lbl)
 
-        self.compact_open_lbl = QLabel("空头开仓价: 12337.0 (1手)")
+        self.compact_open_lbl = QLabel("空头开仓价: 12666.0 (1手)")
         self.compact_open_lbl.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: bold; border: none; background: transparent;")
         self.compact_open_lbl.setAlignment(Qt.AlignCenter)
         compact_layout.addWidget(self.compact_open_lbl)
 
-        self.compact_comm_lbl = QLabel("来回佣金扣除: -33.7 元")
+        self.compact_comm_lbl = QLabel("来回佣金扣除: -34.2 元")
         self.compact_comm_lbl.setStyleSheet("color: #facc15; font-size: 11px; font-weight: bold; border: none; background: transparent;")
         self.compact_comm_lbl.setAlignment(Qt.AlignCenter)
         compact_layout.addWidget(self.compact_comm_lbl)
@@ -1952,28 +1671,28 @@ class ClockWindow(QWidget):
 
     def init_workers(self):
         self.ag_thread = QThread()
-        self.ag_worker = CommodityQuoteWorker("沪银", "新浪财经 (Sina)")
+        self.ag_worker = CommodityQuoteWorker("沪银", "多源实时聚合")
         self.ag_worker.moveToThread(self.ag_thread)
         self.ag_thread.started.connect(self.ag_worker.do_work)
         self.ag_worker.data_fetched.connect(self.on_silver_data_updated)
         self.ag_thread.start()
 
         self.au_thread = QThread()
-        self.au_worker = CommodityQuoteWorker("沪金", "新浪财经 (Sina)")
+        self.au_worker = CommodityQuoteWorker("沪金", "多源实时聚合")
         self.au_worker.moveToThread(self.au_thread)
         self.au_thread.started.connect(self.au_worker.do_work)
         self.au_worker.data_fetched.connect(self.on_gold_data_updated)
         self.au_thread.start()
 
         self.xau_thread = QThread()
-        self.xau_worker = CommodityQuoteWorker("伦敦金", "新浪财经 (Sina)")
+        self.xau_worker = CommodityQuoteWorker("伦敦金", "国际实时聚合")
         self.xau_worker.moveToThread(self.xau_thread)
         self.xau_thread.started.connect(self.xau_worker.do_work)
         self.xau_worker.data_fetched.connect(self.on_xau_data_updated)
         self.xau_thread.start()
 
         self.xag_thread = QThread()
-        self.xag_worker = CommodityQuoteWorker("伦敦银现", "新浪财经 (Sina)")
+        self.xag_worker = CommodityQuoteWorker("伦敦银现", "国际实时聚合")
         self.xag_worker.moveToThread(self.xag_thread)
         self.xag_thread.started.connect(self.xag_worker.do_work)
         self.xag_worker.data_fetched.connect(self.on_xag_data_updated)
@@ -1981,14 +1700,14 @@ class ClockWindow(QWidget):
 
     def update_compact_pnl(self):
         try:
-            p_data = getattr(self, 'saved_calc_params', {"comm_idx": 0, "dir_idx": 1, "open_price": 12337.0, "lots": 1, "comm_rate": 0.0090})
+            p_data = getattr(self, 'saved_calc_params', {"comm_idx": 0, "dir_idx": 1, "open_price": 12666.0, "lots": 1, "comm_rate": 0.0090})
             comm_idx = p_data.get("comm_idx", 0)
             comm_type = "沪银" if comm_idx == 0 else "沪金"
             mult = 15.0 if comm_idx == 0 else 1000.0
 
-            curr_p = safe_float(self.silver_data.get('price', 12632.0), 12632.0) if comm_type == "沪银" else safe_float(self.gold_data.get('price', 882.76), 882.76)
+            curr_p = safe_float(self.silver_data.get('price', 12666.0), 12666.0) if comm_type == "沪银" else safe_float(self.gold_data.get('price', 885.48), 885.48)
 
-            open_p = p_data.get("open_price", 12337.0)
+            open_p = p_data.get("open_price", 12666.0)
             lots = p_data.get("lots", 1)
             dir_idx = p_data.get("dir_idx", 1)
             is_long = (dir_idx == 0)
@@ -2003,8 +1722,8 @@ class ClockWindow(QWidget):
             single_rate = p_data.get("comm_rate", 0.0090) / 100.0
             round_rate = single_rate * 2.0
 
-            turnover = (open_p + curr_p) * mult * lots
-            total_commission = turnover * single_rate
+            open_turnover = open_p * mult * lots
+            total_commission = open_turnover * single_rate * 2.0
             net_pnl = gross_pnl - total_commission
 
             if hasattr(self, 'compact_comm_lbl'):
@@ -2012,10 +1731,10 @@ class ClockWindow(QWidget):
 
             if hasattr(self, 'compact_pnl_val_lbl'):
                 if net_pnl >= 0:
-                    self.compact_pnl_val_lbl.setText("净浮盈: +%.1f 元" % net_pnl)
+                    self.compact_pnl_val_lbl.setText(f"净浮盈: +{net_pnl:,.1f} 元")
                     self.compact_pnl_val_lbl.setStyleSheet("color: #ef4444; font-size: 15px; font-weight: bold; border: none; background: transparent;")
                 else:
-                    self.compact_pnl_val_lbl.setText("净浮亏: %.1f 元" % net_pnl)
+                    self.compact_pnl_val_lbl.setText(f"净浮亏: {net_pnl:,.1f} 元")
                     self.compact_pnl_val_lbl.setStyleSheet("color: #22c55e; font-size: 15px; font-weight: bold; border: none; background: transparent;")
         except Exception as e:
             log_error(e, "UpdateCompactPnL")
@@ -2030,11 +1749,11 @@ class ClockWindow(QWidget):
         self.check_price_alerts(info)
 
     def on_xau_data_updated(self, info):
-        self.xau_data = info
+        self.xau_data.update(info)
         self.update_silver_board_ui()
 
     def on_xag_data_updated(self, info):
-        self.xag_data = info
+        self.xag_data.update(info)
         self.update_silver_board_ui()
 
     def on_gold_data_updated(self, info):
@@ -2074,8 +1793,6 @@ class ClockWindow(QWidget):
                         if triggered:
                             alert["active"] = False
                             updated = True
-                            cond_desc = "价格涨至 %.1f" % target if cond_type == "up" else "价格跌至 %.1f" % target
-                            
                             try:
                                 import time
                                 for _ in range(3):
@@ -2093,8 +1810,8 @@ class ClockWindow(QWidget):
     def update_silver_board_ui(self):
         d_ag = self.silver_data
         d_au = self.gold_data
-        d_xau = getattr(self, 'xau_data', {"price": "4094.9380", "change_pct": "+0.35%"})
-        d_xag = getattr(self, 'xag_data', {"price": "52.473", "change_pct": "+0.45%"})
+        d_xau = getattr(self, 'xau_data', {"price": "4105.58", "change_pct": "+0.89%"})
+        d_xag = getattr(self, 'xag_data', {"price": "52.660", "change_pct": "+1.48%"})
         
         ag_chg = safe_float(d_ag.get('change', 0))
         au_chg = safe_float(d_au.get('change', 0))
@@ -2130,10 +1847,10 @@ class ClockWindow(QWidget):
             '</tr>'
             '</table>'
         ) % (
-            str(self.ag_contract), str(d_ag.get("price", "12632")), str(ag_color), str(d_ag.get("change_pct", "0.00%")),
-            str(self.au_contract), str(d_au.get("price", "882.76")), str(au_color), str(d_au.get("change_pct", "0.00%")),
-            str(d_xau.get("price", "2685.50")), str(xau_color), str(d_xau.get("change_pct", "+0.35%")),
-            str(d_xag.get("price", "31.80")), str(xag_color), str(d_xag.get("change_pct", "+0.45%"))
+            str(self.ag_contract), str(d_ag.get("price", "12687.0")), str(ag_color), str(d_ag.get("change_pct", "+0.61%")),
+            str(self.au_contract), str(d_au.get("price", "882.28")), str(au_color), str(d_au.get("change_pct", "+0.57%")),
+            str(d_xau.get("price", "4105.58")), str(xau_color), str(d_xau.get("change_pct", "+0.89%")),
+            str(d_xag.get("price", "52.660")), str(xag_color), str(d_xag.get("change_pct", "+1.48%"))
         )
         self.silver_board.setText(html_text)
 
@@ -2283,7 +2000,7 @@ class ClockWindow(QWidget):
                     s = int(diff.total_seconds())
                     return True, "贵金属期货：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
             
-            if weekday >= 5:
+            if weekday == 5 or weekday == 6:
                 days_ahead = 2 if weekday == 5 else 1
                 next_open = datetime.datetime.combine(now.date() + datetime.timedelta(days=days_ahead), datetime.time(9, 0))
                 diff = next_open - now
@@ -2291,9 +2008,11 @@ class ClockWindow(QWidget):
                 d = s // 86400
                 h = (s % 86400) // 3600
                 m = (s % 3600) // 60
-                return False, "贵金属期货：已休市", f"距开盘 {d}天 {h:02d}时{m:02d}分"
+                return False, "贵金属期货：周末休市", f"距开盘 {d}天 {h:02d}时{m:02d}分"
 
             s_m_open = datetime.datetime.combine(now.date(), datetime.time(9, 0))
+            s_m_rest_start = datetime.datetime.combine(now.date(), datetime.time(10, 15))
+            s_m_rest_end = datetime.datetime.combine(now.date(), datetime.time(10, 30))
             s_m_close = datetime.datetime.combine(now.date(), datetime.time(11, 30))
             s_a_open = datetime.datetime.combine(now.date(), datetime.time(13, 30))
             s_a_close = datetime.datetime.combine(now.date(), datetime.time(15, 0))
@@ -2305,8 +2024,19 @@ class ClockWindow(QWidget):
                 diff = close_dt - now
                 s = int(diff.total_seconds())
                 return True, "贵金属期货：交易中 (Live)", f"距收盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
-                
-            if datetime.time(9, 0) <= t <= datetime.time(11, 30):
+            elif datetime.time(2, 30) < t < datetime.time(9, 0):
+                diff = s_m_open - now
+                s = int(diff.total_seconds())
+                return False, "贵金属期货：早盘休市", f"距开盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(9, 0) <= t < datetime.time(10, 15):
+                diff = s_m_rest_start - now
+                s = int(diff.total_seconds())
+                return True, "贵金属期货：交易中 (Live)", f"距小节休息 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(10, 15) <= t < datetime.time(10, 30):
+                diff = s_m_rest_end - now
+                s = int(diff.total_seconds())
+                return False, "贵金属期货：小节休息", f"距开盘 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+            elif datetime.time(10, 30) <= t <= datetime.time(11, 30):
                 diff = s_m_close - now
                 s = int(diff.total_seconds())
                 return True, "贵金属期货：交易中 (Live)", f"距休市 {s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
@@ -2336,7 +2066,7 @@ class ClockWindow(QWidget):
                 d = s // 86400
                 h = (s % 86400) // 3600
                 m = (s % 3600) // 60
-                return False, "股市：已休市", f"距开盘 {d}天 {h:02d}时{m:02d}分"
+                return False, "股市：周末休市", f"距开盘 {d}天 {h:02d}时{m:02d}分"
                 
             s_m_open = datetime.datetime.combine(now.date(), datetime.time(9, 30))
             s_m_close = datetime.datetime.combine(now.date(), datetime.time(11, 30))
@@ -2383,8 +2113,10 @@ class ClockWindow(QWidget):
         is_a_open, a_status, a_countdown = self.get_market_countdown(now, market_type="A")
         is_ag_open, ag_status, ag_countdown = self.get_market_countdown(now, market_type="AG")
         
-        self.stock_status_label.setText(f"{a_status}  <span style='color: #38bdf8; font-size: 11px;'>({a_countdown})</span>")
-        self.silver_status_label.setText(f"{ag_status}  <span style='color: #38bdf8; font-size: 11px;'>({ag_countdown})</span>")
+        ag_cd_str = f" ({ag_countdown})" if ag_countdown else ""
+        a_cd_str = f" ({a_countdown})" if a_countdown else ""
+        self.stock_status_label.setText(f"{a_status}  <span style='color: #38bdf8; font-size: 11px;'>{a_cd_str}</span>")
+        self.silver_status_label.setText(f"{ag_status}  <span style='color: #38bdf8; font-size: 11px;'>{ag_cd_str}</span>")
 
     def update_macro_countdown(self, now):
         upcoming = []
