@@ -943,62 +943,120 @@ class BaseQuoteSource:
 
 class DomesticCommodityQuoteSource(BaseQuoteSource):
     def get_quote(self, target_type: str) -> dict:
-        import time, requests
+        import json, time, requests
         is_gold = ('金' in target_type or 'AU' in target_type.upper())
         prefix = 'au' if is_gold else 'ag'
         PREFIX_UP = 'AU' if is_gold else 'AG'
-        latest, open_price, change, chg_pct_val, volume, open_interest, contract_name = 0.0, 0.0, 0.0, 0.0, '467827', '254876', (PREFIX_UP + '0')
-        try:
-            ts = int(time.time() * 1000)
-            url = f'https://hq.sinajs.cn/list=nf_{PREFIX_UP}0,nf_{prefix}0&_={ts}'
-            headers = {'Referer': 'https://finance.sina.com.cn', 'User-Agent': 'Mozilla/5.0'}
-            r = requests.get(url, headers=headers, timeout=2.5)
-            if r.status_code == 200:
-                r.encoding = 'gbk'
-                for line in r.text.split(';'):
-                    if '="' in line:
-                        vals = line.split('="')[1].strip('"\n').split(',')
-                        if len(vals) > 12:
-                            p = safe_float(vals[6], 0.0)
-                            if p > 50:
-                                latest = p
-                                raw_open = safe_float(vals[1], 0.0)
-                                if raw_open > 50:
-                                    open_price = raw_open
-                                open_interest = str(vals[10]) if len(vals) > 10 else '254876'
-                                volume = str(vals[11]) if len(vals) > 11 else '467827'
-                                contract_name = str(vals[12]) if len(vals) > 12 and vals[12] else (PREFIX_UP + '0')
-                                break
-        except Exception:
-            pass
-        if latest <= 0 or open_price <= 0:
+        latest, change, chg_pct_val, volume, open_interest, contract_name = 0.0, 0.0, 0.0, '467827', '254876', (PREFIX_UP + '0')
+        
+        if is_gold:
             try:
-                for secid in [f'113.{PREFIX_UP}0', f'113.{prefix}0', f'113.{PREFIX_UP}9999']:
-                    url_em = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f46,f47,f48'
+                ts = int(time.time() * 1000)
+                url = "https://hq.sinajs.cn/list=nf_%s0,nf_%s0&_=%d" % (PREFIX_UP, prefix, ts)
+                headers = {'Referer': 'https://finance.sina.com.cn', 'User-Agent': 'Mozilla/5.0'}
+                r = requests.get(url, headers=headers, timeout=2.5)
+                if r.status_code == 200:
+                    r.encoding = 'gbk'
+                    for line in r.text.split(';'):
+                        if '="' in line:
+                            vals = line.split('="')[1].strip('"\n').split(',')
+                            if len(vals) > 12:
+                                p = safe_float(vals[8], 0.0)
+                                if p <= 0:
+                                    p = safe_float(vals[6], 0.0)
+                                if p <= 0:
+                                    p = safe_float(vals[4], 0.0)
+                                if p > 10:
+                                    latest = p
+                                    settle_price = 0.0
+                                    for idx in [13, 14, 4, 2, 1]:
+                                        s_val = safe_float(vals[idx], 0.0)
+                                        if 10 < s_val < 999999 and abs(s_val - latest) < latest * 0.2:
+                                            settle_price = s_val
+                                            break
+                                    if settle_price <= 0:
+                                        settle_price = latest
+                                    change = latest - settle_price
+                                    chg_pct_val = (change / settle_price * 100.0) if settle_price > 0 else 0.0
+                                    contract_name = str(vals[12]) if len(vals) > 12 and vals[12] else (PREFIX_UP + '0')
+                                    break
+            except Exception:
+                pass
+
+        if latest <= 0:
+            try:
+                for secid in ['113.%s0' % PREFIX_UP, '113.%s0' % prefix, '113.%s9999' % PREFIX_UP, '113.%s9999' % prefix]:
+                    url_em = 'https://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f43,f44,f45,f46,f47,f48,f60,f169,f170' % secid
                     resp = requests.get(url_em, headers={'Referer': 'https://quote.eastmoney.com', 'User-Agent': 'Mozilla/5.0'}, timeout=2.5)
                     if resp.status_code == 200:
                         jdata = resp.json()
                         edata = jdata.get('data')
                         if edata:
+                            if is_gold:
+                                try:
+                                    print(json.dumps(edata, ensure_ascii=False, indent=2))
+                                except Exception:
+                                    pass
                             p = safe_float(edata.get('f43', 0), 0.0)
-                            if p > 50:
-                                if latest <= 0:
-                                    latest = p / 100.0 if p > 100000 else p
-                                raw_o = safe_float(edata.get('f46', 0), 0.0)
-                                if raw_o > 50:
-                                    open_price = raw_o / 100.0 if raw_o > 100000 else raw_o
+                            if p > 10:
+                                latest = p / 100.0 if p > 1000 else p
+                                settle = safe_float(edata.get('f60', 0), 0.0)
+                                if settle > 1000:
+                                    settle = settle / 100.0
+                                elif settle <= 0:
+                                    settle = latest
+                                if settle > 0:
+                                    change = latest - settle
+                                    chg_pct_val = (change / settle) * 100.0
+                                else:
+                                    raw_f169 = safe_float(edata.get('f169', 0), 0.0)
+                                    change = raw_f169 / 100.0 if abs(raw_f169) > 100 else raw_f169
+                                    raw_f170 = safe_float(edata.get('f170', 0), 0.0)
+                                    chg_pct_val = raw_f170 / 100.0 if abs(raw_f170) > 10 else raw_f170
                                 volume = str(edata.get('f47', '467827'))
                                 open_interest = str(edata.get('f48', '254876'))
                                 contract_name = secid.split('.')[1].upper()
-                                break
+                                if latest > 0:
+                                    break
             except Exception:
                 pass
+
+        if latest <= 0 and not is_gold:
+            try:
+                ts = int(time.time() * 1000)
+                url = 'https://hq.sinajs.cn/list=nf_%s0,nf_%s0&_=%d' % (PREFIX_UP, prefix, ts)
+                headers = {'Referer': 'https://finance.sina.com.cn', 'User-Agent': 'Mozilla/5.0'}
+                r = requests.get(url, headers=headers, timeout=2.5)
+                if r.status_code == 200:
+                    r.encoding = 'gbk'
+                    for line in r.text.split(';'):
+                        if '="' in line:
+                            vals = line.split('="')[1].strip('"\n').split(',')
+                            if len(vals) > 12:
+                                p = safe_float(vals[8], 0.0)
+                                if p <= 0:
+                                    p = safe_float(vals[6], 0.0)
+                                if p <= 0:
+                                    p = safe_float(vals[4], 0.0)
+                                if p > 10:
+                                    latest = p
+                                    settle_price = 0.0
+                                    for idx in [13, 14, 4, 2, 1]:
+                                        s_val = safe_float(vals[idx], 0.0)
+                                        if 10 < s_val < 999999 and abs(s_val - latest) < latest * 0.2:
+                                            settle_price = s_val
+                                            break
+                                    if settle_price <= 0:
+                                        settle_price = latest
+                                    change = latest - settle_price
+                                    chg_pct_val = (change / settle_price * 100.0) if settle_price > 0 else 0.0
+                                    contract_name = str(vals[12]) if len(vals) > 12 and vals[12] else (PREFIX_UP + '0')
+                                    break
+            except Exception:
+                pass
+
         if latest > 0:
-            if open_price <= 0 or abs(open_price - latest) > latest * 0.2:
-                open_price = latest
-            change = latest - open_price
-            chg_pct_val = (change / open_price * 100.0) if open_price > 0 else 0.0
-            change_pct = f'{chg_pct_val:+.2f}%'
+            change_pct = '%+.2f%%' % chg_pct_val
             return {
                 'contract': contract_name,
                 'price': ('%.2f' % latest) if is_gold else ('%.1f' % latest),
@@ -1008,6 +1066,7 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                 'open_interest': open_interest
             }
         return {}
+
 
 class InternationalQuoteSource(BaseQuoteSource):
     def get_quote(self, target_type: str) -> dict:
@@ -1023,14 +1082,14 @@ class InternationalQuoteSource(BaseQuoteSource):
                     vals = parts[1].strip('";\n').split(',')
                     if len(vals) > 1 and safe_float(vals[0], 0) > 0:
                         price_val = safe_float(vals[0], 0)
-                        open_p = safe_float(vals[8], 0) if len(vals) > 8 else 0.0
-                        if open_p <= 0 and len(vals) > 7:
-                            open_p = safe_float(vals[7], 0)
-                        if open_p <= 0:
-                            open_p = price_val
+                        settle_p = safe_float(vals[7], 0) if len(vals) > 7 else 0.0
+                        if settle_p <= 0 and len(vals) > 8:
+                            settle_p = safe_float(vals[8], 0)
+                        if settle_p <= 0:
+                            settle_p = price_val
                             
-                        change = price_val - open_p
-                        change_pct = (change / open_p * 100.0) if open_p > 0 else 0.0
+                        change = price_val - settle_p
+                        change_pct = (change / settle_p * 100.0) if settle_p > 0 else 0.0
                         
                         return {
                             "contract": "XAUUSD" if is_gold else "AGUSDO",
@@ -1056,12 +1115,8 @@ class InternationalQuoteSource(BaseQuoteSource):
                         raw_latest = safe_float(data.get('f44', 0))
                     if raw_latest > 0:
                         latest = raw_latest / 100.0 if raw_latest > 10000 else raw_latest
-                        raw_open = safe_float(data.get('f46', 0))
-                        open_p = raw_open / 100.0 if raw_open > 10000 else raw_open
-                        if open_p <= 0:
-                            open_p = latest
-                        change = latest - open_p
-                        change_pct = (change / open_p * 100.0) if open_p > 0 else 0.0
+                        change = safe_float(data.get('f169', 0))
+                        change_pct = safe_float(data.get('f170', 0))
                         
                         return {
                             "contract": "XAUUSD" if is_gold else "AGUSDO",
@@ -1478,11 +1533,11 @@ class ClockWindow(QWidget):
         }
         self.gold_data = {
             "contract": "AU0",
-            "price": "882.28",
-            "change": "+5.00",
-            "change_pct": "+0.57%",
-            "volume": "102014",
-            "open_interest": "144747"
+            "price": "885.5",
+            "change": "+8.50",
+            "change_pct": "+0.97%",
+            "volume": "189766",
+            "open_interest": "140200"
         }
         self.xau_data = {
             "contract": "XAUUSD",
@@ -1848,7 +1903,7 @@ class ClockWindow(QWidget):
             '</table>'
         ) % (
             str(self.ag_contract), str(d_ag.get("price", "12687.0")), str(ag_color), str(d_ag.get("change_pct", "+0.61%")),
-            str(self.au_contract), str(d_au.get("price", "882.28")), str(au_color), str(d_au.get("change_pct", "+0.57%")),
+            str(self.au_contract), str(d_au.get("price", "885.5")), str(au_color), str(d_au.get("change_pct", "+0.97%")),
             str(d_xau.get("price", "4105.58")), str(xau_color), str(d_xau.get("change_pct", "+0.89%")),
             str(d_xag.get("price", "52.660")), str(xag_color), str(d_xag.get("change_pct", "+1.48%"))
         )
@@ -2189,9 +2244,10 @@ if __name__ == "__main__":
     import socket
     single_instance_socket = None
     try:
-        single_instance_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        single_instance_socket.bind(('127.0.0.1', 49832))
-        single_instance_socket.listen(1)
+        single_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        single_socket.bind(('127.0.0.1', 49832))
+        single_socket.listen(1)
+        single_instance_socket = single_socket
     except socket.error:
         pass
 
