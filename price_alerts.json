@@ -2,8 +2,15 @@
   {
     "contract": "AG0",
     "type": "down",
-    "target": 12290.0,
+    "target": 12310.0,
     "active": true,
-    "time": "2026-11-11 00:26:38"
+    "time": "2026-11-11 09:52:12"
+  },
+  {
+    "contract": "AG0",
+    "type": "down",
+    "target": 12400.0,
+    "active": true,
+    "time": "2026-11-11 10:46:57"
   }
 ]

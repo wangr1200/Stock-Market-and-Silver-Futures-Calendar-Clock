@@ -20,7 +20,11 @@ from PyQt5.QtGui import QColor, QBrush, QDesktopServices, QPainter, QIcon, QPixm
 from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QCloseEvent
 
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
+CONFIG_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
+if not os.path.exists(CONFIG_DIR) or not os.access(CONFIG_DIR, os.W_OK):
+    CONFIG_DIR = os.getcwd()
+
+LOG_FILE = os.path.join(CONFIG_DIR, "error.log")
 
 def safe_float(val, default=0.0):
     try:
@@ -42,13 +46,11 @@ DEFAULT_AU_PRICE = 885.48
 DEFAULT_AG_MULTIPLIER = 15.0
 DEFAULT_AU_MULTIPLIER = 1000.0
 
-LOG_FILE = os.path.join(CACHE_DIR, "error.log")
-
 def log_error(err, context_msg=""):
     try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
+        os.makedirs(CONFIG_DIR, exist_ok=True)
         if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 5 * 1024 * 1024:
-            bak_file = os.path.join(CACHE_DIR, "error.log.bak")
+            bak_file = os.path.join(CONFIG_DIR, "error.log.bak")
             if os.path.exists(bak_file):
                 os.remove(bak_file)
             os.rename(LOG_FILE, bak_file)
@@ -64,14 +66,14 @@ def log_error(err, context_msg=""):
 
 def cleanup_cache():
     try:
-        if not os.path.exists(CACHE_DIR):
+        if not os.path.exists(CONFIG_DIR):
             return
             
         now_ts = datetime.datetime.now().timestamp()
         expire_seconds = 30 * 24 * 3600
         
-        for filename in os.listdir(CACHE_DIR):
-            filepath = os.path.join(CACHE_DIR, filename)
+        for filename in os.listdir(CONFIG_DIR):
+            filepath = os.path.join(CONFIG_DIR, filename)
             if os.path.isfile(filepath) and not filename.endswith("error.log"):
                 file_mtime = os.path.getmtime(filepath)
                 if now_ts - file_mtime > expire_seconds:
@@ -81,135 +83,6 @@ def cleanup_cache():
                         pass
     except Exception as e:
         log_error(e, "CleanupCache")
-
-def check_is_market_open(now=None, market_type="AG"):
-    if now is None:
-        now = datetime.datetime.now()
-    weekday = now.weekday()
-    t = now.time()
-    
-    if weekday == 5 and t <= datetime.time(2, 30) and market_type == "AG":
-        return True
-    if weekday >= 5:
-        return False
-        
-    date_key = now.strftime("%Y-%m-%d")
-    if date_key in HOLIDAY_SCHEDULE:
-        info = HOLIDAY_SCHEDULE[date_key]
-        market_hours = info.get("market_hours", {})
-        
-        if market_type in market_hours:
-            intervals = market_hours[market_type]
-            for itv in intervals:
-                o_h, o_m = map(int, itv["open"].split(":"))
-                c_h, c_m = map(int, itv["close"].split(":"))
-                if datetime.time(o_h, o_m) <= t <= datetime.time(c_h, c_m):
-                    return True
-            return False
-
-        types = info.get("types", []) if isinstance(info, dict) else info
-        if market_type in types:
-            return False
-
-    if market_type == "AG":
-        if (datetime.time(9, 0) <= t <= datetime.time(10, 15)) or \
-           (datetime.time(10, 30) <= t <= datetime.time(11, 30)) or \
-           (datetime.time(13, 30) <= t <= datetime.time(15, 0)) or \
-           (t >= datetime.time(21, 0) or t <= datetime.time(2, 30)):
-            return True
-    elif market_type == "A":
-        if (datetime.time(9, 30) <= t <= datetime.time(11, 30)) or \
-           (datetime.time(13, 0) <= t <= datetime.time(15, 0)):
-            return True
-    elif market_type == "HK":
-        if (datetime.time(9, 30) <= t <= datetime.time(12, 0)) or \
-           (datetime.time(13, 0) <= t <= datetime.time(16, 0)):
-            return True
-        
-    return False
-
-REG_PATH = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-APP_NAME = "MarketDesktopClock"
-
-def set_autostart(enable=True):
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_ALL_ACCESS)
-        if enable:
-            app_path = os.path.abspath(sys.argv[0])
-            if app_path.endswith(".py"):
-                cmd = '"%s" "%s"' % (sys.executable, app_path)
-            else:
-                cmd = '"%s"' % app_path
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
-        else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-            except FileNotFoundError:
-                pass
-        winreg.CloseKey(key)
-        return True
-    except Exception as e:
-        print("设置开机自启失败: %s" % e)
-        return False
-
-def check_autostart():
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
-        winreg.QueryValueEx(key, APP_NAME)
-        winreg.CloseKey(key)
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-COLOR_THEMES = {
-    "天蓝色 (默认极客)": {
-        "bg_color": "#1e222b",
-        "time_color": "#38bdf8",
-        "card_bg": "#262b36",
-        "accent": "#0284c7"
-    },
-    "炫酷暗黑 (Cool Black)": {
-        "bg_color": "#121212",
-        "time_color": "#f43f5e",
-        "card_bg": "#1e1e1e",
-        "accent": "#e11d48"
-    },
-    "翡翠森林 (Emerald Green)": {
-        "bg_color": "#064e3b",
-        "time_color": "#34d399",
-        "card_bg": "#047857",
-        "accent": "#059669"
-    },
-    "紫罗兰 (Midnight Violet)": {
-        "bg_color": "#2e1065",
-        "time_color": "#c084fc",
-        "card_bg": "#3b0764",
-        "accent": "#9333ea"
-    },
-    "浪漫樱粉 (Sakura Pink)": {
-        "bg_color": "#831843",
-        "time_color": "#f472b6",
-        "card_bg": "#9d174d",
-        "accent": "#db2777"
-    },
-    "琥珀烫金 (Warm Amber)": {
-        "bg_color": "#451a03",
-        "time_color": "#fbbf24",
-        "card_bg": "#78350f",
-        "accent": "#d97706"
-    }
-}
-
-MACRO_EVENTS = [
-    {"name": "11月 CPI数据 (11/12公布)", "time": datetime.datetime(2026, 11, 12, 21, 30)},
-    {"name": "11月 非农报告 (12/04公布)", "time": datetime.datetime(2026, 12, 4, 21, 30)},
-    {"name": "12月 FOMC 议息会议 (12/10)", "time": datetime.datetime(2026, 12, 10, 3, 0)},
-    {"name": "11月 CPI数据 (12/10公布)", "time": datetime.datetime(2026, 12, 10, 21, 30)},
-    {"name": "12月 非农报告 (01/08公布)", "time": datetime.datetime(2027, 1, 8, 21, 30)},
-    {"name": "2027年1月 议息会议 (01/28)", "time": datetime.datetime(2027, 1, 28, 3, 0)},
-]
 
 HOLIDAY_SCHEDULE = {
     "2026-01-01": {"types": ["A", "HK", "AG"], "reason": "元旦休市"},
@@ -284,6 +157,68 @@ HOLIDAY_SCHEDULE = {
     }
 }
 
+def get_dynamic_macro_events():
+    now = datetime.datetime.now()
+    y, m = now.year, now.month
+    events = [
+        {"name": "美国非农就业报告 (NFP)", "time": datetime.datetime(y, m if m <= 11 else 1, (5 if m <= 11 else 5), 20, 30) if datetime.datetime(y, m if m <= 11 else 1, 5, 20, 30) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 5, 20, 30)},
+        {"name": "美联储利率决议 (FOMC)", "time": datetime.datetime(y, m, 18, 14, 0) if datetime.datetime(y, m, 18, 14, 0) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 18, 14, 0)},
+        {"name": "美国CPI数据公布", "time": datetime.datetime(y, m, 12, 20, 30) if datetime.datetime(y, m, 12, 20, 30) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 12, 20, 30)},
+        {"name": "欧洲央行利率决议", "time": datetime.datetime(y, m, 15, 14, 15) if datetime.datetime(y, m, 15, 14, 15) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 15, 14, 15)}
+    ]
+    return events
+
+COLOR_THEMES = {
+    "默认暗色": {
+        "bg_color": "#1e222b",
+        "time_color": "#38bdf8",
+        "card_bg": "#262b36",
+        "accent": "#0284c7"
+    },
+    "极简深灰": {
+        "bg_color": "#121212",
+        "time_color": "#e0e0e0",
+        "card_bg": "#1e1e1e",
+        "accent": "#333333"
+    },
+    "科技极光": {
+        "bg_color": "#0f172a",
+        "time_color": "#34d399",
+        "card_bg": "#1e293b",
+        "accent": "#059669"
+    }
+}
+
+def check_autostart():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, "MarketDesktopClock")
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        return False
+
+def set_autostart(enable):
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+        if enable:
+            exe_path = sys.executable
+            script_path = os.path.abspath(sys.argv[0])
+            if script_path.endswith(".py"):
+                cmd = f'"{exe_path}" "{script_path}"'
+            else:
+                cmd = f'"{script_path}"'
+            winreg.SetValueEx(key, "MarketDesktopClock", 0, winreg.REG_SZ, cmd)
+        else:
+            try:
+                winreg.DeleteValue(key, "MarketDesktopClock")
+            except Exception:
+                pass
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        return False
+
 class SilentTipDialog(QDialog):
     def __init__(self, title, message, parent=None):
         super().__init__(parent)
@@ -317,7 +252,7 @@ class SilentTipDialog(QDialog):
         layout.setSpacing(12)
 
         title_lbl = QLabel("[提示] " + title_text)
-        title_lbl.setStyleSheet("color: #38bdf8; font-size: 15px; font-weight: bold; border: none; background: transparent;")
+        title_lbl.setStyleSheet("color: #ffffff; font-size: 15px; font-weight: bold; border: none; background: transparent;")
         layout.addWidget(title_lbl)
 
         msg_lbl = QLabel(msg_text)
@@ -364,7 +299,7 @@ class AddPriceAlertDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
         title = QLabel("设置合约价格预警")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #38bdf8; margin-bottom: 6px;")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff; margin-bottom: 6px;")
         layout.addWidget(title)
 
         form = QFormLayout()
@@ -380,8 +315,8 @@ class AddPriceAlertDialog(QDialog):
             
         self.contract_combo.setStyleSheet("""
             QComboBox {
-                background-color: #262b36; color: #38bdf8; font-weight: bold;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                background-color: #262b36; color: #ffffff; font-weight: bold;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
             QComboBox QAbstractItemView { background-color: #1e222b; color: white; selection-background-color: #0284c7; }
         """)
@@ -393,7 +328,7 @@ class AddPriceAlertDialog(QDialog):
         self.cond_combo.setStyleSheet("""
             QComboBox {
                 background-color: #262b36; color: #e2e8f0;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
             QComboBox QAbstractItemView { background-color: #1e222b; color: white; selection-background-color: #0284c7; }
         """)
@@ -405,7 +340,7 @@ class AddPriceAlertDialog(QDialog):
         self.price_spin.setValue(self.current_price)
         self.price_spin.setStyleSheet("""
             QDoubleSpinBox {
-                background-color: #262b36; color: #38bdf8; font-weight: bold;
+                background-color: #262b36; color: #ffffff; font-weight: bold;
                 border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
         """)
@@ -487,14 +422,14 @@ class PriceAlertDialog(QDialog):
         
         top_row = QHBoxLayout()
         title = QLabel("涨跌目标位预警中心")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #38bdf8;")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
         top_row.addWidget(title)
         top_row.addStretch()
 
         add_btn = QPushButton("+ 添加预警")
         add_btn.setStyleSheet("""
             QPushButton {
-                background-color: #0284c7; color: white; border-radius: 4px; padding: 5px 12px; font-weight: bold; font-size: 12px;
+                background-color: #0284c7; color: white; border-radius: 4px; padding: 5px 12px; font-weight: bold; font-size: 13px;
             }
             QPushButton:hover { background-color: #0369a1; }
         """)
@@ -509,10 +444,10 @@ class PriceAlertDialog(QDialog):
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #161922; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px;
-                gridline-color: #262b36; font-size: 12px;
+                gridline-color: #262b36; font-size: 13px;
             }
             QHeaderView::section {
-                background-color: #262b36; color: #38bdf8; font-weight: bold; border: none; padding: 4px;
+                background-color: #262b36; color: #ffffff; font-weight: bold; border: none; padding: 4px;
             }
         """)
         layout.addWidget(self.table)
@@ -529,7 +464,7 @@ class PriceAlertDialog(QDialog):
         sync_cloud_btn = QPushButton("同步到云端")
         sync_cloud_btn.setStyleSheet("""
             QPushButton {
-                background-color: #059669; color: white; border-radius: 4px; padding: 5px 12px; font-weight: bold; font-size: 12px;
+                background-color: #059669; color: white; border-radius: 4px; padding: 5px 12px; font-weight: bold; font-size: 13px;
             }
             QPushButton:hover { background-color: #10b981; }
         """)
@@ -542,8 +477,8 @@ class PriceAlertDialog(QDialog):
         layout.addLayout(bot_row)
 
     def get_alerts_filepath(self):
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        return os.path.join(CACHE_DIR, "price_alerts.json")
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        return os.path.join(CONFIG_DIR, "price_alerts.json")
 
     def load_alerts(self):
         filepath = self.get_alerts_filepath()
@@ -660,14 +595,25 @@ class PriceAlertDialog(QDialog):
 
             server_key = os.getenv("SERVER_CHAN_KEY", "").strip()
             if not server_key:
-                config_file = os.path.join(CACHE_DIR, "config.json")
-                if os.path.exists(config_file):
-                    try:
-                        with open(config_file, "r", encoding="utf-8") as f:
-                            cfg = json.load(f)
-                            server_key = (cfg.get("server_chan_key") or cfg.get("server_key") or "").strip()
-                    except Exception:
-                        pass
+                possible_dirs = [
+                    CONFIG_DIR,
+                    os.getcwd(),
+                    os.path.dirname(os.path.abspath(sys.argv[0])),
+                    os.path.expanduser("~\\.market_clock_cache")
+                ]
+                for d in possible_dirs:
+                    if not d: continue
+                    cf = os.path.join(d, "config.json")
+                    if os.path.exists(cf):
+                        try:
+                            with open(cf, "r", encoding="utf-8") as f:
+                                cfg = json.load(f)
+                                sk = (cfg.get("server_chan_key") or cfg.get("server_key") or "").strip()
+                                if sk:
+                                    server_key = sk
+                                    break
+                        except Exception:
+                            pass
 
             if not server_key:
                 dlg = SilentTipDialog("微信推送失败", "未检测到 Server酱 SendKey！\n请在 config.json 中配置有效的 server_chan_key。", self)
@@ -759,8 +705,8 @@ class MarketCalendarDialog(QDialog):
         self.calendar.setGridVisible(True)
         self.calendar.setStyleSheet("""
             QCalendarWidget QAbstractItemView:enabled {
-                font-size: 14px; color: #334155;
-                selection-background-color: #3b82f6; selection-color: white;
+                font-size: 15px; color: #334155;
+                selection-background-color: #ffffff; selection-color: white;
             }
             QCalendarWidget QWidget#qt_calendar_navigationbar { background-color: #1e222b; }
             QCalendarWidget QToolButton { color: white; font-size: 13px; font-weight: bold; }
@@ -769,11 +715,11 @@ class MarketCalendarDialog(QDialog):
         layout.addWidget(self.calendar)
 
         legend_label = QLabel("A股休市  |  港股休市  |  贵金属期货休市")
-        legend_label.setStyleSheet("color: #475569; font-size: 12px; font-weight: bold; margin-top: 6px;")
+        legend_label.setStyleSheet("color: #475569; font-size: 13px; font-weight: bold; margin-top: 6px;")
         layout.addWidget(legend_label)
 
         hint_label = QLabel("点击带圆点的日期可查看具体休市原因")
-        hint_label.setStyleSheet("color: #64748b; font-size: 12px; font-weight: bold; padding: 4px;")
+        hint_label.setStyleSheet("color: #64748b; font-size: 13px; font-weight: bold; padding: 1px 2px; line-height: 0.95;")
         layout.addWidget(hint_label)
 
     def on_date_clicked(self, qdate):
@@ -822,12 +768,12 @@ class SettingsDialog(QDialog):
         form_layout.addRow(self.ontop_chk)
 
         sep_lbl2 = QLabel("─── 个性化外观 ───")
-        sep_lbl2.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: bold; margin-top: 4px;")
+        sep_lbl2.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: bold; margin-top: 4px;")
         form_layout.addRow(sep_lbl2)
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(list(COLOR_THEMES.keys()) + ["自定义数字颜色..."])
-        settings_file = os.path.join(CACHE_DIR, "config.json")
+        settings_file = os.path.join(CONFIG_DIR, "config.json")
         data = {}
         if os.path.exists(settings_file):
             try:
@@ -839,7 +785,7 @@ class SettingsDialog(QDialog):
         self.theme_combo.setCurrentIndex(saved_theme_idx)
         self.theme_combo.setStyleSheet("""
             QComboBox {
-                background-color: #262b36; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                background-color: #262b36; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
             QComboBox QAbstractItemView { background-color: #1e222b; color: white; selection-background-color: #0284c7; }
         """)
@@ -888,7 +834,7 @@ class SettingsDialog(QDialog):
     def change_theme(self, index):
         if not self.parent_window:
             return
-        settings_file = os.path.join(CACHE_DIR, "config.json")
+        settings_file = os.path.join(CONFIG_DIR, "config.json")
         data = {}
         if os.path.exists(settings_file):
             try:
@@ -898,7 +844,7 @@ class SettingsDialog(QDialog):
                 pass
         data["theme_index"] = index
         try:
-            os.makedirs(CACHE_DIR, exist_ok=True)
+            os.makedirs(CONFIG_DIR, exist_ok=True)
             with open(settings_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -1078,6 +1024,45 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
         return {}
 
 
+class USStockQuoteSource(BaseQuoteSource):
+    def get_quote(self, target_type: str) -> dict:
+        is_iau = ("IAU" in target_type.upper() or "黄金" in target_type)
+        symbol = "IAU" if is_iau else "SLV"
+        
+        try:
+            sina_sym = f"gb_{symbol.lower()}"
+            url = f"https://hq.sinajs.cn/list={sina_sym}"
+            headers = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=3.0)
+            if resp.status_code == 200 and '="' in resp.text:
+                parts = resp.text.split('="')
+                if len(parts) > 1:
+                    vals = [v.strip() for v in parts[1].strip('";\n').split(',')]
+                    if len(vals) > 26 and safe_float(vals[1], 0) > 0:
+                        price_val = safe_float(vals[1], 0)
+                        prev_close = safe_float(vals[26], 0.0)
+                        if prev_close <= 0 and len(vals) > 35:
+                            prev_close = safe_float(vals[35], 0.0)
+                        if prev_close <= 0:
+                            prev_close = price_val
+                            
+                        change = price_val - prev_close
+                        change_pct_val = (change / prev_close * 100.0) if prev_close > 0 else 0.0
+                        
+                        return {
+                            "contract": symbol,
+                            "price": "%.3f" % price_val,
+                            "change": "%+.3f" % change,
+                            "change_pct": "%+.2f%%" % change_pct_val,
+                            "volume": str(vals[10]) if len(vals) > 10 else "25000",
+                            "open_interest": "80000"
+                        }
+        except Exception:
+            pass
+
+        return {}
+
+
 class InternationalQuoteSource(BaseQuoteSource):
     def get_quote(self, target_type: str) -> dict:
         is_gold = ("金" in target_type or "XAU" in target_type.upper())
@@ -1162,9 +1147,15 @@ class CommodityQuoteWorker(QObject):
         last_valid_info = None
         
         while self.running:
+            is_us = ("IAU" in self.target_type.upper() or "SLV" in self.target_type.upper() or "ETF" in self.target_type)
             is_intl = ("伦敦" in self.target_type or "XAU" in self.target_type.upper() or "AGUS" in self.target_type.upper())
             try:
-                source = InternationalQuoteSource() if is_intl else DomesticCommodityQuoteSource()
+                if is_us:
+                    source = USStockQuoteSource()
+                elif is_intl:
+                    source = InternationalQuoteSource()
+                else:
+                    source = DomesticCommodityQuoteSource()
                 info = source.get_quote(self.target_type)
                 if info and safe_float(info.get("price", "0")) > 0:
                     last_valid_info = info
@@ -1203,7 +1194,7 @@ class ProfitLossCalculatorDialog(QDialog):
         layout.setSpacing(10)
 
         title = QLabel("实时持仓盈亏与佣金计算器")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #38bdf8;")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
         layout.addWidget(title)
 
         form = QFormLayout()
@@ -1213,8 +1204,8 @@ class ProfitLossCalculatorDialog(QDialog):
         self.comm_combo.addItems(["沪银 (AG) - 15千克/手", "沪金 (AU) - 1000克/手"])
         self.comm_combo.setStyleSheet("""
             QComboBox {
-                background-color: #262b36; color: #38bdf8; font-weight: bold;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                background-color: #262b36; color: #ffffff; font-weight: bold;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
             QComboBox QAbstractItemView { background-color: #1e222b; color: white; selection-background-color: #0284c7; }
         """)
@@ -1225,15 +1216,15 @@ class ProfitLossCalculatorDialog(QDialog):
         self.comm_combo.setCurrentIndex(saved_comm_idx)
 
         lbl0 = QLabel("计算品种:")
-        lbl0.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: bold;")
+        lbl0.setStyleSheet("color: #e2e8f0; font-size: 13px; font-weight: bold;")
         form.addRow(lbl0, self.comm_combo)
 
         self.dir_combo = QComboBox()
         self.dir_combo.addItems(["做多 (Buy Long)", "做空 (Sell Short)"])
         self.dir_combo.setStyleSheet("""
             QComboBox {
-                background-color: #262b36; color: #38bdf8; font-weight: bold;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                background-color: #262b36; color: #ffffff; font-weight: bold;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
             QComboBox QAbstractItemView { background-color: #1e222b; color: white; selection-background-color: #0284c7; }
         """)
@@ -1256,12 +1247,12 @@ class ProfitLossCalculatorDialog(QDialog):
         self.open_price_spin.setStyleSheet("""
             QDoubleSpinBox {
                 background-color: #262b36; color: #ffffff; font-weight: bold;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
         """)
 
         lbl2 = QLabel("开仓价格:")
-        lbl2.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: bold;")
+        lbl2.setStyleSheet("color: #e2e8f0; font-size: 13px; font-weight: bold;")
         form.addRow(lbl2, self.open_price_spin)
 
         saved_lots = 1
@@ -1274,12 +1265,12 @@ class ProfitLossCalculatorDialog(QDialog):
         self.lots_spin.setStyleSheet("""
             QSpinBox {
                 background-color: #262b36; color: #ffffff; font-weight: bold;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
         """)
 
         lbl3 = QLabel("持仓手数:")
-        lbl3.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: bold;")
+        lbl3.setStyleSheet("color: #e2e8f0; font-size: 13px; font-weight: bold;")
         form.addRow(lbl3, self.lots_spin)
 
         saved_comm = 0.0090
@@ -1294,13 +1285,13 @@ class ProfitLossCalculatorDialog(QDialog):
         self.comm_spin.setSuffix("%")
         self.comm_spin.setStyleSheet("""
             QDoubleSpinBox {
-                background-color: #262b36; color: #38bdf8; font-weight: bold;
-                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 12px;
+                background-color: #262b36; color: #ffffff; font-weight: bold;
+                border: 1px solid #475569; border-radius: 4px; padding: 4px; font-size: 13px;
             }
         """)
 
         lbl4 = QLabel("单边佣金费率:")
-        lbl4.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: bold;")
+        lbl4.setStyleSheet("color: #e2e8f0; font-size: 13px; font-weight: bold;")
         form.addRow(lbl4, self.comm_spin)
 
         layout.addLayout(form)
@@ -1347,6 +1338,8 @@ class ProfitLossCalculatorDialog(QDialog):
         self.calculate()
 
     def on_commodity_combo_changed(self, idx):
+        if self.parent_window and hasattr(self.parent_window, 'saved_calc_params') and self.parent_window.saved_calc_params.get("comm_idx") == idx:
+            return
         if idx == 0:
             self.open_price_spin.setValue(12666.0)
         else:
@@ -1420,7 +1413,7 @@ class ProfitLossCalculatorDialog(QDialog):
 
 class ClockWindow(QWidget):
     def load_settings(self):
-        settings_file = os.path.join(CACHE_DIR, "config.json")
+        settings_file = os.path.join(CONFIG_DIR, "config.json")
         data = {}
         if os.path.exists(settings_file):
             try:
@@ -1459,7 +1452,7 @@ class ClockWindow(QWidget):
 
         calc_comm_idx = data.get("calc_comm_idx", 0)
         calc_dir = data.get("calc_dir_idx", 1)
-        calc_price = data.get("calc_open_price", 12666.0)
+        calc_price = data.get("calc_open_price", 12335.0)
         calc_lots = data.get("calc_lots", 1)
         calc_comm = data.get("calc_comm_rate", 0.0090)
         
@@ -1473,7 +1466,7 @@ class ClockWindow(QWidget):
         self.update_compact_pnl()
 
     def save_settings(self):
-        settings_file = os.path.join(CACHE_DIR, "config.json")
+        settings_file = os.path.join(CONFIG_DIR, "config.json")
         theme_idx = 0
         if hasattr(self, 'current_bg_color'):
             theme_names = list(COLOR_THEMES.keys())
@@ -1499,7 +1492,7 @@ class ClockWindow(QWidget):
             "pos_y": self.y(),
             "calc_comm_idx": self.saved_calc_params.get("comm_idx", 0),
             "calc_dir_idx": self.saved_calc_params.get("dir_idx", 1),
-            "calc_open_price": self.saved_calc_params.get("open_price", 12666.0),
+            "calc_open_price": self.saved_calc_params.get("open_price", 12335.0),
             "calc_lots": self.saved_calc_params.get("lots", 1),
             "calc_comm_rate": self.saved_calc_params.get("comm_rate", 0.0090)
         }
@@ -1509,7 +1502,12 @@ class ClockWindow(QWidget):
             data["server_chan_key"] = existing_key
 
         try:
-            os.makedirs(CACHE_DIR, exist_ok=True)
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            if os.path.exists(settings_file):
+                try:
+                    os.chmod(settings_file, 0o666)
+                except Exception:
+                    pass
             with open(settings_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -1528,7 +1526,8 @@ class ClockWindow(QWidget):
         self.current_card_bg = "#262b36"
         self.current_accent = "#0284c7"
 
-        self.saved_calc_params = {"comm_idx": 0, "dir_idx": 1, "open_price": 12666.0, "lots": 1, "comm_rate": 0.0090}
+        self.saved_calc_params = {"comm_idx": 0, "dir_idx": 1, "open_price": 12335.0, "lots": 1, "comm_rate": 0.0090}
+        self.cached_holiday_text = "距离下一节假日：元旦"
         
         self.ag_contract = "AG0"
         self.au_contract = "AU0"
@@ -1562,6 +1561,22 @@ class ClockWindow(QWidget):
             "price": "52.660",
             "change": "+0.770",
             "change_pct": "+1.48%",
+            "volume": "25000",
+            "open_interest": "80000"
+        }
+        self.iau_data = {
+            "contract": "IAU",
+            "price": "76.140",
+            "change": "-1.640",
+            "change_pct": "-2.11%",
+            "volume": "25000",
+            "open_interest": "80000"
+        }
+        self.slv_data = {
+            "contract": "SLV",
+            "price": "46.835",
+            "change": "-1.305",
+            "change_pct": "-2.71%",
             "volume": "25000",
             "open_interest": "80000"
         }
@@ -1599,27 +1614,27 @@ class ClockWindow(QWidget):
         
         self.lock_btn = QPushButton("[锁]")
         self.lock_btn.setFixedSize(32, 28)
-        self.lock_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 12px; font-weight: bold; color: #38bdf8; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.lock_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 13px; font-weight: bold; color: #ffffff; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
         self.lock_btn.clicked.connect(self.toggle_lock)
 
         self.dock_btn = QPushButton("◀")
         self.dock_btn.setFixedSize(28, 28)
-        self.dock_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 13px; color: #38bdf8; font-weight: bold; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.dock_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 13px; color: #ffffff; font-weight: bold; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
         self.dock_btn.clicked.connect(self.toggle_dock)
 
         self.calc_btn = QPushButton("🧮")
         self.calc_btn.setFixedSize(28, 28)
-        self.calc_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; color: #22c55e; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.calc_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 15px; color: #22c55e; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
         self.calc_btn.clicked.connect(self.open_calculator)
 
         self.alert_btn = QPushButton("🔔")
         self.alert_btn.setFixedSize(28, 28)
-        self.alert_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; color: #38bdf8; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.alert_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 15px; color: #ffffff; } QPushButton:hover { background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
         self.alert_btn.clicked.connect(self.open_price_alert)
 
         self.settings_btn = QPushButton("⚙")
         self.settings_btn.setFixedSize(28, 28)
-        self.settings_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; color: #a1a1aa; } QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.settings_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 15px; color: #a1a1aa; } QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
         self.settings_btn.clicked.connect(self.open_settings)
 
         top_bar.addWidget(self.lock_btn)
@@ -1631,40 +1646,37 @@ class ClockWindow(QWidget):
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(28, 28)
-        self.close_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; color: #a1a1aa; } QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        self.close_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 15px; color: #a1a1aa; } QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
         self.close_btn.clicked.connect(self.hide)
         top_bar.addWidget(self.close_btn)
         c_layout.addLayout(top_bar)
 
         self.time_holiday_card = QWidget()
-        self.time_holiday_card.setStyleSheet("QWidget { background-color: %s; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }" % self.current_card_bg)
+        self.time_holiday_card.setStyleSheet("QWidget { background-color: transparent; border: none; }")
         th_layout = QVBoxLayout(self.time_holiday_card)
-        th_layout.setContentsMargins(12, 10, 12, 10)
-        th_layout.setSpacing(6)
+        th_layout.setContentsMargins(4, 0, 4, 0)
+        th_layout.setSpacing(0)
 
-        self.datetime_label = QLabel()
-        self.datetime_label.setAlignment(Qt.AlignCenter)
-        th_layout.addWidget(self.datetime_label)
-
-        self.next_holiday_label = QLabel("距离下一节假日：元旦")
-        self.next_holiday_label.setAlignment(Qt.AlignCenter)
-        th_layout.addWidget(self.next_holiday_label)
+        self.time_holiday_board = QLabel()
+        self.time_holiday_board.setAlignment(Qt.AlignCenter)
+        th_layout.addWidget(self.time_holiday_board)
 
         c_layout.addWidget(self.time_holiday_card)
 
         self.status_card = QWidget()
         self.status_card.setStyleSheet("QWidget { background-color: %s; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }" % self.current_card_bg)
+        self.status_card.setFixedHeight(48)
         status_layout = QVBoxLayout(self.status_card)
-        status_layout.setContentsMargins(12, 6, 12, 6)
-        status_layout.setSpacing(6)
+        status_layout.setContentsMargins(10, 2, 10, 2)
+        status_layout.setSpacing(0)
 
         top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 2, 0, 2)
+        top_row.setContentsMargins(0, 0, 0, 0)
         self.stock_status_label = QLabel("股市：已收盘")
-        self.stock_status_label.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: bold; border: none; background: transparent;")
+        self.stock_status_label.setStyleSheet("color: #f1f5f9; font-size: 13px; font-weight: bold; border: none; background: transparent;")
         
         self.cal_btn = QPushButton("休市日历")
-        self.cal_btn.setStyleSheet("QPushButton { background-color: #262b36; color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); border-radius: 4px; padding: 3px 6px; font-size: 11px; font-weight: bold; } QPushButton:hover { background-color: #333b4d; }")
+        self.cal_btn.setStyleSheet("QPushButton { background-color: #262b36; color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); border-radius: 4px; padding: 1px 4px; font-size: 11px; font-weight: bold; } QPushButton:hover { background-color: #333b4d; }")
         self.cal_btn.clicked.connect(self.show_calendar)
         
         top_row.addWidget(self.stock_status_label)
@@ -1672,22 +1684,12 @@ class ClockWindow(QWidget):
         top_row.addWidget(self.cal_btn)
         status_layout.addLayout(top_row)
 
-        sep_line = QLabel()
-        sep_line.setFixedHeight(1)
-        sep_line.setStyleSheet("background-color: rgba(255,255,255,0.08); border: none;")
-        status_layout.addWidget(sep_line)
-
         bot_row = QHBoxLayout()
-        bot_row.setContentsMargins(0, 2, 0, 2)
+        bot_row.setContentsMargins(0, 0, 0, 0)
         self.silver_status_label = QLabel("贵金属期货：监控中")
-        self.silver_status_label.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: bold; border: none; background: transparent;")
+        self.silver_status_label.setStyleSheet("color: #f1f5f9; font-size: 13px; font-weight: bold; border: none; background: transparent;")
         bot_row.addWidget(self.silver_status_label)
         bot_row.addStretch()
-        
-        spacer_widget = QWidget()
-        spacer_widget.setFixedHeight(26)
-        spacer_widget.setFixedWidth(1)
-        bot_row.addWidget(spacer_widget)
         
         status_layout.addLayout(bot_row)
 
@@ -1695,34 +1697,26 @@ class ClockWindow(QWidget):
 
         self.silver_board = QLabel()
         self.silver_board.setAlignment(Qt.AlignCenter)
+        self.silver_board.setStyleSheet("QLabel { background-color: %s; border-radius: 6px; padding: 1px 2px; margin-top: -2px; margin-bottom: -2px; border: 1px solid rgba(255,255,255,0.06); }" % self.current_card_bg)
         self.update_silver_board_ui()
         c_layout.addWidget(self.silver_board)
 
         self.compact_pnl_card = QWidget()
-        self.compact_pnl_card.setStyleSheet("QWidget { background-color: #141820; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.3); }")
+        self.compact_pnl_card.setStyleSheet("QWidget { background-color: #141820; border-radius: 6px; margin-top: 1px; margin-bottom: 1px; border: 1px solid rgba(56, 189, 248, 0.3); }")
         compact_layout = QVBoxLayout(self.compact_pnl_card)
-        compact_layout.setContentsMargins(10, 8, 10, 8)
-        compact_layout.setSpacing(4)
+        compact_layout.setContentsMargins(2, 0, 2, 0)
+        compact_layout.setSpacing(0)
 
-        self.compact_pnl_val_lbl = QLabel("净浮盈: +0.0 元")
-        self.compact_pnl_val_lbl.setStyleSheet("color: #22c55e; font-size: 16px; font-weight: bold; border: none; background: transparent;")
-        self.compact_pnl_val_lbl.setAlignment(Qt.AlignCenter)
-        compact_layout.addWidget(self.compact_pnl_val_lbl)
-
-        self.compact_open_lbl = QLabel("空头开仓价: 12666.0 (1手)")
-        self.compact_open_lbl.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: bold; border: none; background: transparent;")
-        self.compact_open_lbl.setAlignment(Qt.AlignCenter)
-        compact_layout.addWidget(self.compact_open_lbl)
-
-        self.compact_comm_lbl = QLabel("来回佣金扣除: -34.2 元")
-        self.compact_comm_lbl.setStyleSheet("color: #facc15; font-size: 11px; font-weight: bold; border: none; background: transparent;")
-        self.compact_comm_lbl.setAlignment(Qt.AlignCenter)
-        compact_layout.addWidget(self.compact_comm_lbl)
+        self.compact_pnl_board = QLabel()
+        self.compact_pnl_board.setAlignment(Qt.AlignCenter)
+        self.compact_pnl_board.setStyleSheet("background: transparent; border: none;")
+        compact_layout.addWidget(self.compact_pnl_board)
 
         c_layout.addWidget(self.compact_pnl_card)
 
         self.macro_board = QLabel()
         self.macro_board.setAlignment(Qt.AlignCenter)
+        self.macro_board.setStyleSheet("QLabel { background-color: #141820; border-radius: 6px; padding: 0px 2px; margin: -10px 0px; border: 1px solid rgba(255,255,255,0.06); }"); self.macro_board.setFixedHeight(54)
         c_layout.addWidget(self.macro_board)
 
         self.apply_theme(self.current_bg_color, self.current_time_color, self.current_card_bg, self.current_accent)
@@ -1763,23 +1757,60 @@ class ClockWindow(QWidget):
         self.xag_worker.data_fetched.connect(self.on_xag_data_updated)
         self.xag_thread.start()
 
+        self.iau_thread = QThread()
+        self.iau_worker = CommodityQuoteWorker("IAU", "美股实时聚合")
+        self.iau_worker.moveToThread(self.iau_thread)
+        self.iau_thread.started.connect(self.iau_worker.do_work)
+        self.iau_worker.data_fetched.connect(self.on_iau_data_updated)
+        self.iau_thread.start()
+
+        self.slv_thread = QThread()
+        self.slv_worker = CommodityQuoteWorker("SLV", "美股实时聚合")
+        self.slv_worker.moveToThread(self.slv_thread)
+        self.slv_thread.started.connect(self.slv_worker.do_work)
+        self.slv_worker.data_fetched.connect(self.on_slv_data_updated)
+        self.slv_thread.start()
+
     def update_compact_pnl(self):
         try:
-            p_data = getattr(self, 'saved_calc_params', {"comm_idx": 0, "dir_idx": 1, "open_price": 12666.0, "lots": 1, "comm_rate": 0.0090})
+            p_data = getattr(self, 'saved_calc_params', {"comm_idx": 0, "dir_idx": 1, "open_price": 12335.0, "lots": 1, "comm_rate": 0.0090})
             comm_idx = p_data.get("comm_idx", 0)
             comm_type = "沪银" if comm_idx == 0 else "沪金"
             mult = 15.0 if comm_idx == 0 else 1000.0
+            mult_unit = "千克/手" if comm_idx == 0 else "克/手"
 
             curr_p = safe_float(self.silver_data.get('price', 12666.0), 12666.0) if comm_type == "沪银" else safe_float(self.gold_data.get('price', 885.48), 885.48)
 
-            open_p = p_data.get("open_price", 12666.0)
+            open_p = p_data.get("open_price", 12335.0)
             lots = p_data.get("lots", 1)
             dir_idx = p_data.get("dir_idx", 1)
             is_long = (dir_idx == 0)
 
-            if hasattr(self, 'compact_open_lbl'):
-                dir_str = "多头" if is_long else "空头"
-                self.compact_open_lbl.setText("%s开仓价: %.1f  (%d手)" % (dir_str, open_p, lots))
+            dir_str = "多头" if is_long else "空头"
+            open_str = "%s开仓价: %.1f  (%d手)" % (dir_str, open_p, lots)
+
+            alert_str = "预警平仓价: 暂无活跃预警"
+            try:
+                alert_filepath = os.path.join(CONFIG_DIR, "price_alerts.json")
+                if os.path.exists(alert_filepath):
+                    with open(alert_filepath, "r", encoding="utf-8") as af:
+                        alerts_list = json.load(af)
+                        for al in alerts_list:
+                            if al.get("active", True):
+                                c_name = al.get("contract", "")
+                                if (comm_type == "沪银" and ("AG" in c_name.upper() or "银" in c_name)) or \
+                                   (comm_type == "沪金" and ("AU" in c_name.upper() or "金" in c_name)):
+                                    t_val = safe_float(al.get("target", 0))
+                                    t_type = al.get("type", "up")
+                                    if t_type == "up":
+                                        alert_str = "预警平仓价: 涨到 " + f"{t_val:.1f}" + "自动平仓"
+                                    else:
+                                        alert_str = "预警平仓价: 跌到 " + f"{t_val:.1f}" + "自动平仓"
+                                    break
+            except Exception:
+                pass
+
+            curr_price_str = "当前%s实时价: %.1f" % (comm_type, curr_p)
 
             diff = (curr_p - open_p) if is_long else (open_p - curr_p)
             gross_pnl = diff * mult * lots
@@ -1791,16 +1822,27 @@ class ClockWindow(QWidget):
             total_commission = open_turnover * single_rate * 2.0
             net_pnl = gross_pnl - total_commission
 
-            if hasattr(self, 'compact_comm_lbl'):
-                self.compact_comm_lbl.setText("来回佣金扣除: -%.1f 元 (双边费率: %.3f%%)" % (total_commission, round_rate*100))
+            comm_str = "来回佣金扣除: -%.1f 元 (双边费率: %.3f%%)" % (total_commission, round_rate*100)
 
-            if hasattr(self, 'compact_pnl_val_lbl'):
-                if net_pnl >= 0:
-                    self.compact_pnl_val_lbl.setText(f"净浮盈: +{net_pnl:,.1f} 元")
-                    self.compact_pnl_val_lbl.setStyleSheet("color: #ef4444; font-size: 15px; font-weight: bold; border: none; background: transparent;")
-                else:
-                    self.compact_pnl_val_lbl.setText(f"净浮亏: {net_pnl:,.1f} 元")
-                    self.compact_pnl_val_lbl.setStyleSheet("color: #22c55e; font-size: 15px; font-weight: bold; border: none; background: transparent;")
+            if net_pnl >= 0:
+                pnl_color = "#ef4444"
+                pnl_str = f"净浮盈: +{net_pnl:,.1f} 元"
+            else:
+                pnl_color = "#22c55e"
+                pnl_str = f"净浮亏: {net_pnl:,.1f} 元"
+
+            if hasattr(self, 'compact_pnl_board'):
+                html = (
+                    '<table width="100%%" cellspacing="0" cellpadding="0" style="margin: 0px; padding: 2px 0px; border-collapse: collapse;">'
+                    '<tr><td align="center" style="font-size: 19px; font-weight: bold; color: #a855f7; margin: 0px; padding: 3px 0px; border: none;">%s</td></tr>'
+                    '<tr><td align="center" style="font-size: 19px; font-weight: bold; color: %s; margin: 0px; padding: 3px 0px; border: none;">%s</td></tr>'
+                    '<tr><td align="center" style="font-size: 19px; font-weight: bold; color: #ffffff; margin: 0px; padding: 3px 0px; border: none;">%s</td></tr>'
+                    '<tr><td align="center" style="font-size: 19px; font-weight: bold; color: #f472b6; margin: 0px; padding: 3px 0px; border: none;">%s</td></tr>'
+                    '<tr><td align="center" style="font-size: 12px; font-weight: bold; color: #facc15; margin: 0px; padding: 3px 0px; border: none;">%s</td></tr>'
+                    '</table>'
+                ) % (curr_price_str, pnl_color, pnl_str, open_str, alert_str, comm_str)
+                self.compact_pnl_board.setStyleSheet("background: transparent; border: none; padding: 0px; margin: 0px;")
+                self.compact_pnl_board.setText(html)
         except Exception as e:
             log_error(e, "UpdateCompactPnL")
 
@@ -1815,6 +1857,14 @@ class ClockWindow(QWidget):
 
     def on_xau_data_updated(self, info):
         self.xau_data.update(info)
+        self.update_silver_board_ui()
+
+    def on_iau_data_updated(self, info):
+        self.iau_data.update(info)
+        self.update_silver_board_ui()
+
+    def on_slv_data_updated(self, info):
+        self.slv_data.update(info)
         self.update_silver_board_ui()
 
     def on_xag_data_updated(self, info):
@@ -1834,7 +1884,7 @@ class ClockWindow(QWidget):
             current_price = safe_float(info.get("price", 0))
             current_contract = info.get("contract", "")
             
-            filepath = os.path.join(CACHE_DIR, "price_alerts.json")
+            filepath = os.path.join(CONFIG_DIR, "price_alerts.json")
             if not os.path.exists(filepath):
                 return
             
@@ -1865,57 +1915,100 @@ class ClockWindow(QWidget):
                                     time.sleep(0.15)
                             except Exception:
                                 pass
+                            
+                            try:
+                                server_key = ""
+                                config_file = os.path.join(CONFIG_DIR, "config.json")
+                                if os.path.exists(config_file):
+                                    with open(config_file, "r", encoding="utf-8") as cf:
+                                        cfg = json.load(cf)
+                                        server_key = (cfg.get("server_chan_key") or cfg.get("server_key") or "").strip()
+                                if not server_key:
+                                    server_key = os.getenv("SERVER_CHAN_KEY", "").strip()
+                                
+                                if server_key:
+                                    url = "https://sctapi.ftqq.com/%s.send" % server_key
+                                    title = "【价格预警达成】%s" % alert_contract
+                                    direction_txt = "涨至 / 突破 (>= %.1f)" % target if cond_type == "up" else "跌至 / 跌破 (<= %.1f)" % target
+                                    desp = (
+                                        "### 设定的目标价格已触发！\n"
+                                        "- 监控标的：%s\n"
+                                        "- 预警条件：%s\n"
+                                        "- 当前最新价：**%.1f**\n"
+                                        "- 触发时间：%s\n"
+                                    ) % (alert_contract, direction_txt, current_price, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                                    requests.post(url, data={"title": title, "desp": desp}, timeout=5)
+                            except Exception as wx_err:
+                                log_error(wx_err, "AlertWeChatPush")
 
             if updated:
                 with open(filepath, "w", encoding="utf-8") as f:
                     json.dump(alerts, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            log_error(e, "CheckPriceAlerts")
 
     def update_silver_board_ui(self):
         d_ag = self.silver_data
         d_au = self.gold_data
         d_xau = getattr(self, 'xau_data', {"price": "4105.58", "change_pct": "+0.89%"})
         d_xag = getattr(self, 'xag_data', {"price": "52.660", "change_pct": "+1.48%"})
+        d_iau = getattr(self, 'iau_data', {"price": "76.140", "change_pct": "-2.11%"})
+        d_slv = getattr(self, 'slv_data', {"price": "46.835", "change_pct": "-2.71%"})
         
         ag_chg = safe_float(d_ag.get('change', 0))
         au_chg = safe_float(d_au.get('change', 0))
         xau_chg = safe_float(d_xau.get('change', 0))
         xag_chg = safe_float(d_xag.get('change', 0))
+        iau_chg = safe_float(d_iau.get('change', 0))
+        slv_chg = safe_float(d_slv.get('change', 0))
 
         ag_color = "#ef4444" if ag_chg >= 0 else "#22c55e"
         au_color = "#ef4444" if au_chg >= 0 else "#22c55e"
         xau_color = "#ef4444" if xau_chg >= 0 else "#22c55e"
         xag_color = "#ef4444" if xag_chg >= 0 else "#22c55e"
+        iau_color = "#ef4444" if iau_chg >= 0 else "#22c55e"
+        slv_color = "#ef4444" if slv_chg >= 0 else "#22c55e"
 
         html_text = (
-            '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 8px; padding: 4px;">'
+            '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 8px; padding: 1px 2px; line-height: 0.95;">'
             '<tr>'
-            '<td style="font-size: 11px; font-weight: bold; color: #94a3b8; padding: 2px 4px;">沪银主力 (%s)</td>'
-            '<td align="center" style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 2px 4px;">%s</td>'
-            '<td align="right" style="font-size: 11px; font-weight: bold; color: %s; padding: 2px 4px;">%s</td>'
+            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px;">沪银主力 (%s)</td>'
+            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px;">%s</td>'
+            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px;">%s</td>'
             '</tr>'
             '<tr>'
-            '<td style="font-size: 11px; font-weight: bold; color: #94a3b8; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">沪金主力 (%s)</td>'
-            '<td align="center" style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 11px; font-weight: bold; color: %s; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">沪金主力 (%s)</td>'
+            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
             '</tr>'
             '<tr>'
-            '<td style="font-size: 11px; font-weight: bold; color: #94a3b8; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">伦敦金 (XAUUSD)</td>'
-            '<td align="center" style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 11px; font-weight: bold; color: %s; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">伦敦金 (XAUUSD)</td>'
+            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
             '</tr>'
             '<tr>'
-            '<td style="font-size: 11px; font-weight: bold; color: #94a3b8; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">伦敦银现 (AGUSDO)</td>'
-            '<td align="center" style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 11px; font-weight: bold; color: %s; padding: 2px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">伦敦银现 (AGUSDO)</td>'
+            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '</tr>'
+            '<tr>'
+            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">IAU (LBMA黄金价格ETF)</td>'
+            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '</tr>'
+            '<tr>'
+            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">SLV (LBMA白银现货ETF)</td>'
+            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
+            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
             '</tr>'
             '</table>'
         ) % (
-            str(self.ag_contract), str(d_ag.get("price", "12687.0")), str(ag_color), str(d_ag.get("change_pct", "+0.61%")),
-            str(self.au_contract), str(d_au.get("price", "885.5")), str(au_color), str(d_au.get("change_pct", "+0.97%")),
-            str(d_xau.get("price", "4105.58")), str(xau_color), str(d_xau.get("change_pct", "+0.89%")),
-            str(d_xag.get("price", "52.660")), str(xag_color), str(d_xag.get("change_pct", "+1.48%"))
+            str(self.ag_contract), str(d_ag.get("price", "12687.0")), str(ag_color), str(d_ag.get("change_pct", "+0.61%%")),
+            str(self.au_contract), str(d_au.get("price", "885.5")), str(au_color), str(d_au.get("change_pct", "+0.97%%")),
+            str(d_xau.get("price", "4105.58")), str(xau_color), str(d_xau.get("change_pct", "+0.89%%")),
+            str(d_xag.get("price", "52.660")), str(xag_color), str(d_xag.get("change_pct", "+1.48%%")),
+            str(d_iau.get("price", "76.140")), str(iau_color), str(d_iau.get("change_pct", "-2.11%%")),
+            str(d_slv.get("price", "46.835")), str(slv_color), str(d_slv.get("change_pct", "-2.71%%"))
         )
         self.silver_board.setText(html_text)
 
@@ -1956,6 +2049,7 @@ class ClockWindow(QWidget):
 
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.setToolTip("桌面市场日历时钟 (运行中)")
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
         self.tray_icon.show()
 
     def closeEvent(self, event: QCloseEvent):
@@ -1966,14 +2060,23 @@ class ClockWindow(QWidget):
             event.ignore()
             self.hide()
 
+    def on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            if self.isVisible():
+                self.hide()
+            else:
+                self.showNormal()
+                self.raise_()
+                self.activateWindow()
+
     def real_quit(self):
         self.is_forced_exit = True
         self.save_settings()
         
-        for worker in [getattr(self, 'ag_worker', None), getattr(self, 'au_worker', None), getattr(self, 'xau_worker', None), getattr(self, 'xag_worker', None)]:
+        for worker in [getattr(self, 'ag_worker', None), getattr(self, 'au_worker', None), getattr(self, 'xau_worker', None), getattr(self, 'xag_worker', None), getattr(self, 'iau_worker', None), getattr(self, 'slv_worker', None)]:
             if worker:
                 worker.stop()
-        for thread in [getattr(self, 'ag_thread', None), getattr(self, 'au_thread', None), getattr(self, 'xau_thread', None), getattr(self, 'xag_thread', None)]:
+        for thread in [getattr(self, 'ag_thread', None), getattr(self, 'au_thread', None), getattr(self, 'xau_thread', None), getattr(self, 'xag_thread', None), getattr(self, 'iau_thread', None), getattr(self, 'slv_thread', None)]:
             if thread:
                 thread.quit()
                 thread.wait(1000)
@@ -1990,10 +2093,10 @@ class ClockWindow(QWidget):
         self.container.setStyleSheet("QWidget#MainContainer { background-color: %s; border-radius: 12px; border: none; }" % bg_color)
         self.update_clock()
 
-        self.time_holiday_card.setStyleSheet("QWidget { background-color: %s; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }" % card_bg)
+        self.time_holiday_card.setStyleSheet("QWidget { background-color: transparent; border: none; }")
         self.silver_board.setStyleSheet("QLabel { background-color: %s; border-radius: 8px; padding: 4px; border: 1px solid rgba(255,255,255,0.06); }" % card_bg)
         self.status_card.setStyleSheet("QWidget { background-color: %s; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }" % card_bg)
-        self.next_holiday_label.setStyleSheet("QLabel { color: #38bdf8; font-size: 12px; font-weight: bold; background: transparent; border: none; padding: 2px; }")
+        
 
     def toggle_dock(self):
         screen = self.screen().availableGeometry() if hasattr(self, 'screen') else QApplication.desktop().screenGeometry(self)
@@ -2170,9 +2273,17 @@ class ClockWindow(QWidget):
         
         time_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y年%m月%d日") + " " + week_days[now.weekday()]
-        self.datetime_label.setText('<div align="center"><span style="font-size: 32px; font-weight: bold; font-family: Consolas, monospace; color: %s;">%s</span><br><span style="font-size: 13px; color: #94a3b8; font-family: sans-serif;">%s</span></div>' % (self.current_time_color, time_str, date_str))
-
         self.update_next_holiday(now)
+        
+        html = (
+            '<table width="100%%" cellspacing="0" cellpadding="0" style="margin: 0px; padding: 0px; border-collapse: collapse; line-height: 1.0;">'
+            '<tr><td align="center" style="font-size: 32px; font-weight: bold; font-family: Consolas, monospace; color: #ffffff; padding: 0px; margin: 0px; border: none;">%s</td></tr>'
+            '<tr><td align="center" style="font-size: 13px; font-family: sans-serif; color: %s; padding: 1px 0px 0px 0px; margin: 0px; border: none;">%s</td></tr>'
+            '<tr><td align="center" style="font-size: 13px; font-weight: bold; font-family: \"Microsoft YaHei\", sans-serif; color: #ffffff; padding: 1px 0px 0px 0px; margin: 0px; border: none;"><span style="color: #ffffff;">%s</span></td></tr>'
+            '</table>'
+        ) % (time_str, self.current_time_color, date_str, getattr(self, 'cached_holiday_text', '距离下一节假日：元旦'))
+        
+        self.time_holiday_board.setText(html)
         self.update_macro_countdown(now)
         
         is_a_open, a_status, a_countdown = self.get_market_countdown(now, market_type="A")
@@ -2180,12 +2291,13 @@ class ClockWindow(QWidget):
         
         ag_cd_str = f" ({ag_countdown})" if ag_countdown else ""
         a_cd_str = f" ({a_countdown})" if a_countdown else ""
-        self.stock_status_label.setText(f"{a_status}  <span style='color: #38bdf8; font-size: 11px;'>{a_cd_str}</span>")
-        self.silver_status_label.setText(f"{ag_status}  <span style='color: #38bdf8; font-size: 11px;'>{ag_cd_str}</span>")
+        self.stock_status_label.setText(f"{a_status}  <span style='color: #ffffff; font-size: 11px;'>{a_cd_str}</span>")
+        self.silver_status_label.setText(f"{ag_status}  <span style='color: #ffffff; font-size: 11px;'>{ag_cd_str}</span>")
 
     def update_macro_countdown(self, now):
         upcoming = []
-        for ev in MACRO_EVENTS:
+        macro_list = get_dynamic_macro_events()
+        for ev in macro_list:
             diff = ev["time"] - now
             if diff.total_seconds() > 0:
                 upcoming.append((ev, diff))
@@ -2206,9 +2318,9 @@ class ClockWindow(QWidget):
                 else:
                     time_str = "%02d时%02d分" % (hours, mins)
                 
-                rows_html += '<tr><td style="font-size: 11px; color: #e2e8f0; padding: 2px 4px;">%s</td><td align="right" style="font-size: 11px; font-weight: bold; color: #38bdf8; padding: 2px 4px;">%s</td></tr>' % (ev["name"], time_str)
+                rows_html += '<tr><td style="font-size: 11px; color: #ffffff; font-weight: bold; padding: 0px 3px; margin: 0px;">%s</td><td align="right" style="font-size: 11px; font-weight: bold; color: #ffffff; padding: 0px 3px; margin: 0px;">%s</td></tr>' % (ev["name"], time_str)
 
-            html_text = '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 8px; padding: 4px;"><tr><td colspan="2" style="font-size: 11px; font-weight: bold; color: #facc15; padding: 2px 4px 4px 4px; border-bottom: 1px solid rgba(255,255,255,0.08);">核心宏观大事件倒计时看板</td></tr>%s</table>' % rows_html
+            html_text = '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 6px; padding: 0px 2px; line-height: 0.75;">%s</table>' % rows_html
             self.macro_board.setText(html_text)
         else:
             self.macro_board.setText("宏观事件：暂无近期安排")
@@ -2236,9 +2348,9 @@ class ClockWindow(QWidget):
             clean_reason = next_reason.replace("休市", "").replace("假期", "").strip()
             if not clean_reason:
                 clean_reason = "节假日"
-            self.next_holiday_label.setText("距离下一节假日：%s (%d天)" % (clean_reason, days_diff))
+            self.cached_holiday_text = "距离下一节假日：%s (%d天)" % (clean_reason, days_diff)
         else:
-            self.next_holiday_label.setText("距离下一节假日：暂无近期安排")
+            self.cached_holiday_text = "距离下一节假日：暂无近期安排"
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and not self.is_locked:
