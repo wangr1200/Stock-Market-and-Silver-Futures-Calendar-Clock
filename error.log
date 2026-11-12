@@ -115,3 +115,42 @@ Traceback (most recent call last):
 shutil.SameFileError: 'D:\\日历\\price_alerts.json' and 'D:\\日历\\price_alerts.json' are the same file
 
 ------------------------------------------------------------
+[2026-11-12 21:49:12] ERROR in MainEntry:
+Type: AttributeError | Message: 'CommodityQuoteWorker' object has no attribute 'started'
+Traceback:
+Traceback (most recent call last):
+  File "D:\日历\create.py", line 3333, in <module>
+    window = ClockWindow()
+  File "D:\日历\create.py", line 2450, in __init__
+    self.init_workers()
+  File "D:\日历\create.py", line 2637, in init_workers
+    self.slv_worker.started.connect(self.slv_worker.do_work)
+AttributeError: 'CommodityQuoteWorker' object has no attribute 'started'
+
+------------------------------------------------------------
+[2026-11-12 21:50:11] ERROR in MainEntry:
+Type: AttributeError | Message: 'CommodityQuoteWorker' object has no attribute 'started'
+Traceback:
+Traceback (most recent call last):
+  File "D:\日历\create.py", line 3333, in <module>
+    window = ClockWindow()
+  File "D:\日历\create.py", line 2450, in __init__
+    self.init_workers()
+  File "D:\日历\create.py", line 2637, in init_workers
+    self.slv_worker.started.connect(self.slv_worker.do_work)
+AttributeError: 'CommodityQuoteWorker' object has no attribute 'started'
+
+------------------------------------------------------------
+[2026-11-12 22:19:21] ERROR in MainEntry:
+Type: AttributeError | Message: 'CommodityQuoteWorker' object has no attribute 'started'
+Traceback:
+Traceback (most recent call last):
+  File "D:\日历\create.py", line 3503, in <module>
+    window = ClockWindow()
+  File "D:\日历\create.py", line 2605, in __init__
+    self.init_workers()
+  File "D:\日历\create.py", line 2768, in init_workers
+    self.au_worker.started.connect(self.au_worker.do_work)
+AttributeError: 'CommodityQuoteWorker' object has no attribute 'started'
+
+------------------------------------------------------------
