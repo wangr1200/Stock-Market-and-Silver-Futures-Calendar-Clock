@@ -1321,22 +1321,29 @@ class IntradayWorker(QObject):
     data_ready = pyqtSignal(dict)
     finished = pyqtSignal()
 
-    def __init__(self, symbol_key, contract_code="", ref_pre_close=0.0, initial_price=0.0):
+    def __init__(self, symbol_key, contract_code="", live_quote_ref=None):
         super().__init__()
         self.symbol_key = symbol_key
         self.contract_code = contract_code
-        self.ref_pre_close = ref_pre_close
-        self.initial_price = initial_price
+        self.live_quote_ref = live_quote_ref if isinstance(live_quote_ref, dict) else {}
         self.running = True
+        self.recorded_ticks = []  # 仅记录运行期间抓取到的真实逐笔快照作为补充
 
     def stop(self):
         self.running = False
 
+    def _get_live_panel_snapshot(self):
+        p = safe_float(self.live_quote_ref.get("price", 0.0), 0.0)
+        c = safe_float(self.live_quote_ref.get("change", 0.0), 0.0)
+        pre = (p - c) if (p > 0 and abs(c) < p * 0.25) else 0.0
+        return p, c, pre
+
     def _validate_pre_close(self, pre_close, latest_price):
+        _, _, live_pre = self._get_live_panel_snapshot()
+        if live_pre > 0:
+            return live_pre
         if latest_price <= 0:
             return pre_close
-        if self.ref_pre_close > 0 and abs(self.ref_pre_close - latest_price) < latest_price * 0.25:
-            return self.ref_pre_close
         if pre_close > 0 and abs(pre_close - latest_price) < latest_price * 0.25:
             return pre_close
         return 0.0
@@ -1373,6 +1380,103 @@ class IntradayWorker(QObject):
 
     def fetch_trends(self):
         headers_em = {"Referer": "https://quote.eastmoney.com", "User-Agent": "Mozilla/5.0"}
+        headers_sina = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+
+        # 1. 针对伦敦金(XAU)和伦敦银现(XAG)的真实全球实时分时接口
+        if self.symbol_key in ("XAU", "XAG"):
+            is_gold = (self.symbol_key == "XAU")
+            # 1A. 新浪外汇/伦敦金银真实分时接口 (fx_sxauusd / fx_sxagusd 以及 XAU / XAG / hf_XAU / hf_XAG)
+            sina_urls = [
+                f"https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20t1=/NewForexService.getMinKline?symbol={'fx_sxauusd' if is_gold else 'fx_sxagusd'}&scale=1&datalen=240",
+                f"https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20t1=/NewForexService.getMinKline?symbol={'fx_sxauusd' if is_gold else 'fx_sxagusd'}&scale=5&datalen=240",
+                f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFuturesMinLine?symbol={'XAU' if is_gold else 'XAG'}",
+                f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFuturesMinLine?symbol={'hf_XAU' if is_gold else 'hf_XAG'}",
+                f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFutures5MinKLine?symbol={'XAU' if is_gold else 'XAG'}"
+            ]
+            for s_url in sina_urls:
+                try:
+                    r = requests.get(s_url, headers=headers_sina, timeout=2.5)
+                    if r.status_code == 200 and "(" in r.text:
+                        raw_body = r.text.split("(", 1)[1].rsplit(")", 1)[0]
+                        parsed = json.loads(raw_body)
+                        arr = parsed.get("result", {}).get("data", []) if isinstance(parsed, dict) else parsed
+                        if isinstance(arr, list) and len(arr) >= 2:
+                            arr = arr[-240:]
+                            times, prices, avgs = [], [], []
+                            cum_sum = 0.0
+                            for idx, item in enumerate(arr):
+                                if isinstance(item, list) and len(item) >= 2:
+                                    t_str = str(item[0])
+                                    p = safe_float(item[1], 0.0)
+                                elif isinstance(item, dict):
+                                    raw_t = str(item.get("d", item.get("t", item.get("time", ""))))
+                                    t_str = raw_t.split(" ")[-1][:5] if " " in raw_t else raw_t
+                                    p = safe_float(item.get("c", item.get("p", item.get("price", 0.0))), 0.0)
+                                else:
+                                    continue
+                                if p > 0:
+                                    times.append(t_str)
+                                    prices.append(p)
+                                    cum_sum += p
+                                    avgs.append(cum_sum / (idx + 1))
+                            if len(prices) >= 2:
+                                valid_pre = self._validate_pre_close(0.0, prices[-1])
+                                if valid_pre <= 0:
+                                    valid_pre = prices[0]
+                                return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+                except Exception:
+                    continue
+
+            # 1B. 东方财富国际贵金属 / 伦敦金银 / COMEX真实分时与1分钟K线接口
+            em_secids = ["122.XAU", "106.XAUUSD", "100.XAU", "101.GC00Y", "118.XAU"] if is_gold else ["122.XAG", "106.XAGUSD", "100.XAG", "101.SI00Y", "118.XAG"]
+            for ndays in (1, 2):
+                for secid in em_secids:
+                    try:
+                        url_t = f"https://push2.eastmoney.com/api/qt/stock/trends2/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=1&ndays={ndays}"
+                        r_t = requests.get(url_t, headers=headers_em, timeout=2.5)
+                        if r_t.status_code == 200:
+                            parsed = self._parse_eastmoney_trends(r_t.json().get("data"))
+                            if parsed and len(parsed.get("prices", [])) >= 2:
+                                if ndays == 2 and len(parsed["times"]) > 240:
+                                    parsed["times"] = parsed["times"][-240:]
+                                    parsed["prices"] = parsed["prices"][-240:]
+                                    parsed["avgs"] = parsed["avgs"][-240:]
+                                return parsed
+                    except Exception:
+                        continue
+
+            for klt in (1, 5):
+                for secid in em_secids:
+                    try:
+                        k_url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt={klt}&fqt=1&end=20500101&lmt=240"
+                        r_k = requests.get(k_url, headers=headers_em, timeout=2.5)
+                        if r_k.status_code == 200:
+                            k_data = r_k.json().get("data")
+                            if k_data and k_data.get("klines"):
+                                klines = k_data["klines"]
+                                times, prices, avgs = [], [], []
+                                cum_sum = 0.0
+                                for idx, row in enumerate(klines):
+                                    parts = str(row).split(",")
+                                    if len(parts) >= 3:
+                                        t_str = parts[0].split(" ")[-1][:5] if " " in parts[0] else parts[0]
+                                        c_val = safe_float(parts[2], 0.0)
+                                        if c_val > 0:
+                                            times.append(t_str)
+                                            prices.append(c_val)
+                                            cum_sum += c_val
+                                            avgs.append(cum_sum / (idx + 1))
+                                if len(prices) >= 2:
+                                    valid_pre = self._validate_pre_close(0.0, prices[-1])
+                                    if valid_pre <= 0:
+                                        valid_pre = prices[0]
+                                    return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+                    except Exception:
+                        continue
+
+            return {"status": "empty"}
+
+        # 2. 国内期货 (AG / AU) 与 美股 ETF (IAU / SLV) 真实分时接口
         secid_candidates = []
         if self.symbol_key == "AG":
             c = self.contract_code.upper() if self.contract_code else "AG0"
@@ -1380,55 +1484,10 @@ class IntradayWorker(QObject):
         elif self.symbol_key == "AU":
             c = self.contract_code.upper() if self.contract_code else "AU0"
             secid_candidates = [f"113.{c}", "113.AU0", "113.au0", "113.AU9999"]
-        elif self.symbol_key == "XAU":
-            secid_candidates = ["122.XAU", "106.XAUUSD", "100.XAU", "101.GC00Y"]
-        elif self.symbol_key == "XAG":
-            secid_candidates = ["122.XAG", "106.XAGUSD", "100.XAG", "101.SI00Y"]
         elif self.symbol_key == "IAU":
             secid_candidates = ["107.IAU", "105.IAU", "106.IAU"]
         elif self.symbol_key == "SLV":
             secid_candidates = ["107.SLV", "105.SLV", "106.SLV"]
-
-        if self.symbol_key in ("XAU", "XAG"):
-            headers_sina = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
-            sym_list = ["XAU", "hf_XAU"] if self.symbol_key == "XAU" else ["XAG", "hf_XAG"]
-            for sym in sym_list:
-                for api_url in [
-                    f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFuturesMinLine?symbol={sym}",
-                    f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFutures5MinKLine?symbol={sym}"
-                ]:
-                    try:
-                        r = requests.get(api_url, headers=headers_sina, timeout=2.5)
-                        if r.status_code == 200 and "(" in r.text:
-                            raw_body = r.text.split("(", 1)[1].rsplit(")", 1)[0]
-                            parsed = json.loads(raw_body)
-                            arr = parsed.get("result", {}).get("data", []) if isinstance(parsed, dict) else parsed
-                            if isinstance(arr, list) and len(arr) >= 2:
-                                arr = arr[-240:]
-                                times, prices, avgs = [], [], []
-                                cum_sum = 0.0
-                                for idx, item in enumerate(arr):
-                                    if isinstance(item, list) and len(item) >= 2:
-                                        t_str = str(item[0])
-                                        p = safe_float(item[1], 0.0)
-                                    elif isinstance(item, dict):
-                                        raw_t = str(item.get("t", item.get("time", item.get("d", ""))))
-                                        t_str = raw_t.split(" ")[-1][:5] if " " in raw_t else raw_t
-                                        p = safe_float(item.get("p", item.get("price", item.get("c", 0.0))), 0.0)
-                                    else:
-                                        continue
-                                    if p > 0:
-                                        times.append(t_str)
-                                        prices.append(p)
-                                        cum_sum += p
-                                        avgs.append(cum_sum / (idx + 1))
-                                if len(prices) >= 2:
-                                    valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
-                                    if valid_pre <= 0:
-                                        valid_pre = prices[0]
-                                    return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
-                    except Exception:
-                        continue
 
         for ndays in (1, 2):
             for secid in secid_candidates:
@@ -1446,9 +1505,8 @@ class IntradayWorker(QObject):
                 except Exception:
                     continue
 
-        kline_secids = secid_candidates
         for klt in (1, 5, 15):
-            for secid in kline_secids:
+            for secid in secid_candidates:
                 try:
                     k_url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt={klt}&fqt=1&end=20500101&lmt=240"
                     r_k = requests.get(k_url, headers=headers_em, timeout=3.0)
@@ -1469,14 +1527,13 @@ class IntradayWorker(QObject):
                                         cum_sum += c_val
                                         avgs.append(cum_sum / (idx + 1))
                             if len(prices) >= 2:
-                                valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                                valid_pre = self._validate_pre_close(0.0, prices[-1])
                                 if valid_pre <= 0:
                                     valid_pre = prices[0]
                                 return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
                 except Exception:
                     continue
 
-        headers_sina = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
         try:
             if self.symbol_key in ("AG", "AU"):
                 sym = (self.contract_code if self.contract_code else f"{self.symbol_key}0").upper()
@@ -1495,50 +1552,10 @@ class IntradayWorker(QObject):
                                 prices.append(p)
                                 avgs.append(a if a > 0 else p)
                     if len(prices) >= 2:
-                        valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                        valid_pre = self._validate_pre_close(0.0, prices[-1])
                         if valid_pre <= 0:
                             valid_pre = prices[0]
                         return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
-            elif self.symbol_key in ("XAU", "XAG"):
-                sym_list = [("XAU", "GC00Y"), ("hf_XAU", "XAU")] if self.symbol_key == "XAU" else [("XAG", "SI00Y"), ("hf_XAG", "XAG")]
-                for primary_sym, alt_sym in sym_list:
-                    for s_code in [primary_sym, alt_sym]:
-                        for api_url in [
-                            f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFuturesMinLine?symbol={s_code}",
-                            f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFutures5MinKLine?symbol={s_code}"
-                        ]:
-                            try:
-                                r = requests.get(api_url, headers=headers_sina, timeout=3.0)
-                                if r.status_code == 200 and "(" in r.text:
-                                    raw_body = r.text.split("(", 1)[1].rsplit(")", 1)[0]
-                                    parsed = json.loads(raw_body)
-                                    arr = parsed.get("result", {}).get("data", []) if isinstance(parsed, dict) else parsed
-                                    if isinstance(arr, list) and len(arr) >= 2:
-                                        arr = arr[-240:]
-                                        times, prices, avgs = [], [], []
-                                        cum_sum = 0.0
-                                        for idx, item in enumerate(arr):
-                                            if isinstance(item, list) and len(item) >= 2:
-                                                t_str = str(item[0])
-                                                p = safe_float(item[1], 0.0)
-                                            elif isinstance(item, dict):
-                                                raw_t = str(item.get("t", item.get("time", item.get("d", ""))))
-                                                t_str = raw_t.split(" ")[-1][:5] if " " in raw_t else raw_t
-                                                p = safe_float(item.get("p", item.get("price", item.get("c", 0.0))), 0.0)
-                                            else:
-                                                continue
-                                            if p > 0:
-                                                times.append(t_str)
-                                                prices.append(p)
-                                                cum_sum += p
-                                                avgs.append(cum_sum / (idx + 1))
-                                        if len(prices) >= 2:
-                                            valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
-                                            if valid_pre <= 0:
-                                                valid_pre = prices[0]
-                                            return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
-                            except Exception:
-                                continue
             elif self.symbol_key in ("IAU", "SLV"):
                 sym = self.symbol_key.lower()
                 url = f"https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20t1=/US_MinKService.getMinK?symbol={sym}&type=5"
@@ -1558,7 +1575,7 @@ class IntradayWorker(QObject):
                             cum_sum += c_val
                             avgs.append(cum_sum / (idx + 1))
                     if len(prices) >= 2:
-                        valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                        valid_pre = self._validate_pre_close(0.0, prices[-1])
                         if valid_pre <= 0:
                             valid_pre = prices[0]
                         return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
@@ -1574,10 +1591,20 @@ class IntradayWorker(QObject):
         while self.running:
             try:
                 res = self.fetch_trends()
+                live_p, live_c, live_pre = self._get_live_panel_snapshot()
                 if res and res.get("status") != "empty" and res.get("prices"):
+                    # 最后一个分时点直接对齐右侧主面板真实最新价与昨收，杜绝双边价格/涨跌幅偏差
+                    if live_p > 0:
+                        res["prices"][-1] = live_p
+                    if live_pre > 0:
+                        res["pre_close"] = live_pre
                     last_valid_data = res
                     self.data_ready.emit(res)
                 elif last_valid_data is not None:
+                    if live_p > 0:
+                        last_valid_data["prices"][-1] = live_p
+                    if live_pre > 0:
+                        last_valid_data["pre_close"] = live_pre
                     self.data_ready.emit(last_valid_data)
                 else:
                     self.data_ready.emit({"status": "empty"})
@@ -1585,7 +1612,7 @@ class IntradayWorker(QObject):
                 if last_valid_data is not None:
                     self.data_ready.emit(last_valid_data)
             
-            for _ in range(30):
+            for _ in range(20):
                 if not self.running:
                     break
                 time.sleep(0.1)
@@ -1768,6 +1795,18 @@ class IntradayChartCanvas(QWidget):
         painter.setPen(QPen(QColor("#ffffff"), 1.5))
         painter.drawEllipse(QRectF(last_x - 3, last_y - 3, 6, 6))
 
+        # 左侧纵轴最新价游标三角形（尖端朝左指向左侧纵轴价格刻度，紧贴左框线内侧）
+        tri_w = 8
+        tri_h = 8
+        tri_poly = QPolygon([
+            QPoint(int(left_m + 1), int(round(last_y))),
+            QPoint(int(left_m + 1 + tri_w), int(round(last_y - tri_h / 2.0))),
+            QPoint(int(left_m + 1 + tri_w), int(round(last_y + tri_h / 2.0))),
+        ])
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        painter.setPen(Qt.NoPen)
+        painter.drawPolygon(tri_poly)
+
         if 0 <= self.hover_idx < n:
             hx = idx_to_x(self.hover_idx)
             hy = val_to_y(self.prices[self.hover_idx])
@@ -1877,13 +1916,23 @@ class IntradayChartDialog(QDialog):
 
     def start_worker(self):
         self.worker_thread = QThread()
-        self.worker = IntradayWorker(self.symbol_key, self.contract_code, self.ref_pre_close, self.initial_price)
+        self.worker = IntradayWorker(self.symbol_key, self.contract_code, self.initial_quote)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.do_work)
         self.worker.data_ready.connect(self.on_data_ready)
         self.worker_thread.start()
 
+    def _sync_header_with_main_panel(self):
+        p_txt = str(self.initial_quote.get("price", "")).strip()
+        pct_txt = str(self.initial_quote.get("change_pct", "")).strip()
+        chg_v = safe_float(self.initial_quote.get("change", 0.0), 0.0)
+        if p_txt and p_txt != "--":
+            c_hex = "#ef4444" if chg_v >= 0 else "#22c55e"
+            self.quote_lbl.setStyleSheet(f"color: {c_hex}; font-family: Consolas, monospace; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+            self.quote_lbl.setText(f"{p_txt}  {pct_txt}")
+
     def on_data_ready(self, data):
+        self._sync_header_with_main_panel()
         if data.get("status") == "empty":
             self.canvas.set_empty_message("当前全球行情接口暂无当日分时明细")
             return
@@ -1893,18 +1942,15 @@ class IntradayChartDialog(QDialog):
         pre_close = data.get("pre_close", 0.0)
         if prices:
             latest = prices[-1]
-            if self.ref_pre_close > 0 and abs(self.ref_pre_close - latest) < latest * 0.25:
-                pre_close = self.ref_pre_close
+            live_p = safe_float(self.initial_quote.get("price", 0.0), 0.0)
+            live_c = safe_float(self.initial_quote.get("change", 0.0), 0.0)
+            if live_p > 0:
+                latest = live_p
+                prices[-1] = live_p
+                if abs(live_c) < live_p * 0.25:
+                    pre_close = live_p - live_c
             self.canvas.set_data(times, prices, avgs, pre_close)
             fmt = f"%.{self.decimals}f"
-            if pre_close > 0 and abs(pre_close - latest) < latest * 0.25:
-                diff = latest - pre_close
-                pct = diff / pre_close * 100.0
-                c_hex = "#ef4444" if diff >= 0 else "#22c55e"
-                self.quote_lbl.setStyleSheet(f"color: {c_hex}; font-family: Consolas, monospace; font-size: 14px; font-weight: bold; border: none; background: transparent;")
-                self.quote_lbl.setText(f"{fmt % latest}  {pct:+.2f}%")
-            else:
-                self.quote_lbl.setText(fmt % latest)
             hi = max(prices)
             lo = min(prices)
             self.footer_lbl.setText(f"日内最高: {fmt % hi}   日内最低: {fmt % lo}   (鼠标悬停看分时点)")
