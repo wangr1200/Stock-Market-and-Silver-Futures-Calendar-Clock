@@ -89,3 +89,29 @@ Traceback (most recent call last):
 shutil.SameFileError: 'D:\\日历\\price_alerts.json' and 'D:\\日历\\price_alerts.json' are the same file
 
 ------------------------------------------------------------
+[2026-11-12 13:47:28] ERROR in GitSync:
+Type: SameFileError | Message: 'D:\\日历\\price_alerts.json' and 'D:\\日历\\price_alerts.json' are the same file
+Traceback:
+Traceback (most recent call last):
+  File "D:\日历\create.py", line 578, in sync_alerts_to_cloud
+    shutil.copy(filepath, repo_json_path)
+  File "D:\Python310\lib\shutil.py", line 417, in copy
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+  File "D:\Python310\lib\shutil.py", line 234, in copyfile
+    raise SameFileError("{!r} and {!r} are the same file".format(src, dst))
+shutil.SameFileError: 'D:\\日历\\price_alerts.json' and 'D:\\日历\\price_alerts.json' are the same file
+
+------------------------------------------------------------
+[2026-11-12 13:53:34] ERROR in GitSync:
+Type: SameFileError | Message: 'D:\\日历\\price_alerts.json' and 'D:\\日历\\price_alerts.json' are the same file
+Traceback:
+Traceback (most recent call last):
+  File "D:\日历\create.py", line 578, in sync_alerts_to_cloud
+    shutil.copy(filepath, repo_json_path)
+  File "D:\Python310\lib\shutil.py", line 417, in copy
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+  File "D:\Python310\lib\shutil.py", line 234, in copyfile
+    raise SameFileError("{!r} and {!r} are the same file".format(src, dst))
+shutil.SameFileError: 'D:\\日历\\price_alerts.json' and 'D:\\日历\\price_alerts.json' are the same file
+
+------------------------------------------------------------

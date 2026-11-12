@@ -5,7 +5,6 @@ import os
 import datetime
 import requests
 import traceback
-import random
 import json
 import winreg
 import subprocess
@@ -16,7 +15,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout,
                              QFormLayout, QComboBox, QColorDialog, QSystemTrayIcon, QMenu, QAction,
                              QTableWidget, QTableWidgetItem, QHeaderView, QDoubleSpinBox, QSpinBox)
 from PyQt5.QtCore import Qt, QTimer, QPoint, QDate, QRect, QRectF, pyqtSignal, QObject, QSettings, QThread, pyqtSlot
-from PyQt5.QtGui import QColor, QBrush, QDesktopServices, QPainter, QIcon, QPixmap, QPen, QPolygon
+from PyQt5.QtGui import QColor, QBrush, QDesktopServices, QPainter, QIcon, QPixmap, QPen, QPolygon, QPainterPath, QLinearGradient, QFont
 from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QCloseEvent
 
@@ -41,8 +40,8 @@ def safe_float(val, default=0.0):
 
 DEFAULT_AG_CONTRACT = "AG0"
 DEFAULT_AU_CONTRACT = "AU0"
-DEFAULT_AG_PRICE = 12666.0
-DEFAULT_AU_PRICE = 885.48
+DEFAULT_AG_PRICE = 12341.0
+DEFAULT_AU_PRICE = 852.50
 DEFAULT_AG_MULTIPLIER = 15.0
 DEFAULT_AU_MULTIPLIER = 1000.0
 
@@ -160,11 +159,20 @@ HOLIDAY_SCHEDULE = {
 def get_dynamic_macro_events():
     now = datetime.datetime.now()
     y, m = now.year, now.month
+    grace = datetime.timedelta(hours=2)
+    def _next_or_recent(day, hour, minute):
+        dt = datetime.datetime(y, m, day, hour, minute)
+        if dt + grace > now:
+            return dt
+        ny = y + (1 if m == 12 else 0)
+        nm = (m % 12) + 1
+        return datetime.datetime(ny, nm, day, hour, minute)
+
     events = [
-        {"name": "美国非农就业报告 (NFP)", "time": datetime.datetime(y, m if m <= 11 else 1, (5 if m <= 11 else 5), 20, 30) if datetime.datetime(y, m if m <= 11 else 1, 5, 20, 30) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 5, 20, 30)},
-        {"name": "美联储利率决议 (FOMC)", "time": datetime.datetime(y, m, 18, 14, 0) if datetime.datetime(y, m, 18, 14, 0) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 18, 14, 0)},
-        {"name": "美国CPI数据公布", "time": datetime.datetime(y, m, 12, 20, 30) if datetime.datetime(y, m, 12, 20, 30) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 12, 20, 30)},
-        {"name": "欧洲央行利率决议", "time": datetime.datetime(y, m, 15, 14, 15) if datetime.datetime(y, m, 15, 14, 15) > now else datetime.datetime(y + (1 if m == 12 else 0), (m % 12) + 1, 15, 14, 15)}
+        {"name": "美国非农就业报告 (NFP)", "time": _next_or_recent(5, 20, 30)},
+        {"name": "美联储利率决议 (FOMC)", "time": _next_or_recent(18, 14, 0)},
+        {"name": "美国CPI数据公布", "time": _next_or_recent(12, 20, 30)},
+        {"name": "欧洲央行利率决议", "time": _next_or_recent(15, 14, 15)}
     ]
     return events
 
@@ -285,7 +293,7 @@ class SilentTipDialog(QDialog):
 
 
 class AddPriceAlertDialog(QDialog):
-    def __init__(self, current_contract="AG0", current_price=12666.0, parent=None):
+    def __init__(self, current_contract="AG0", current_price=12341.0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("添加价格预警")
         self.resize(340, 240)
@@ -369,20 +377,20 @@ class AddPriceAlertDialog(QDialog):
     def on_contract_changed(self, idx):
         if idx == 0:
             self.contract = getattr(self.parent_window, 'ag_contract', 'AG0') if self.parent_window else "AG0"
-            p = 12666.0
+            p = 12341.0
             if self.parent_window and hasattr(self.parent_window, 'silver_data'):
                 try:
-                    p = safe_float(self.parent_window.silver_data.get("price", 12666.0))
+                    p = safe_float(self.parent_window.silver_data.get("price", 12341.0))
                 except Exception:
                     pass
             self.price_spin.setValue(p)
             self.hint_lbl.setText("当前最新参考价: %.1f" % p)
         else:
             self.contract = getattr(self.parent_window, 'au_contract', 'AU0') if self.parent_window else "AU0"
-            p = 885.48
+            p = 852.50
             if self.parent_window and hasattr(self.parent_window, 'gold_data'):
                 try:
-                    p = safe_float(self.parent_window.gold_data.get("price", 885.48))
+                    p = safe_float(self.parent_window.gold_data.get("price", 852.50))
                 except Exception:
                     pass
             self.price_spin.setValue(p)
@@ -496,7 +504,7 @@ class PriceAlertDialog(QDialog):
             cond_str = "涨到 (>=)" if alert.get("type") == "up" else "跌到 (<=)"
             cond_item = QTableWidgetItem(cond_str)
             price_item = QTableWidgetItem("%.1f" % alert.get('target', 0.0))
-            status_str = "监控中" if alert.get("active", True) else "已触发"
+            status_str = "监控中" if alert.get("active", True) else "已平仓"
             status_item = QTableWidgetItem(status_str)
             if alert.get("active", True):
                 status_item.setForeground(QColor("#38bdf8"))
@@ -518,11 +526,11 @@ class PriceAlertDialog(QDialog):
 
     def open_add_alert(self):
         curr_contract = "AG0"
-        curr_price = 12666.0
+        curr_price = 12341.0
         if self.parent_window and hasattr(self.parent_window, 'silver_data'):
             curr_contract = self.parent_window.silver_data.get("contract", "AG0")
             try:
-                curr_price = safe_float(self.parent_window.silver_data.get("price", 12666.0))
+                curr_price = safe_float(self.parent_window.silver_data.get("price", 12341.0))
             except Exception as e:
                 log_error(e, "PriceAlert Add")
 
@@ -599,7 +607,7 @@ class PriceAlertDialog(QDialog):
                     CONFIG_DIR,
                     os.getcwd(),
                     os.path.dirname(os.path.abspath(sys.argv[0])),
-                    os.path.expanduser("~\\.market_clock_cache")
+                    os.path.expanduser("~\.market_clock_cache")
                 ]
                 for d in possible_dirs:
                     if not d: continue
@@ -904,8 +912,8 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                 if r.status_code == 200:
                     r.encoding = 'gbk'
                     for line in r.text.split(';'):
-                        if '="' in line:
-                            vals = line.split('="')[1].strip('"\n').split(',')
+                            vals = line.split('="')[1].strip('"').split(',')
+
                             if len(vals) > 12:
                                 p = safe_float(vals[8], 0.0)
                                 if p <= 0:
@@ -981,7 +989,7 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                     r.encoding = 'gbk'
                     for line in r.text.split(';'):
                         if '="' in line:
-                            vals = line.split('="')[1].strip('"\n').split(',')
+                            vals = line.split('="')[1].strip('"').split(',')
                             if len(vals) > 12:
                                 p = safe_float(vals[8], 0.0)
                                 if p <= 0:
@@ -1066,66 +1074,98 @@ class USStockQuoteSource(BaseQuoteSource):
 class InternationalQuoteSource(BaseQuoteSource):
     def get_quote(self, target_type: str) -> dict:
         is_gold = ("金" in target_type or "XAU" in target_type.upper())
-        sina_sym = "hf_XAU" if is_gold else "hf_XAG"
+        symbol = "XAUUSD" if is_gold else "XAGUSD"
+        
+        # 尝试直接从新浪或全球行情接口（支持新浪国际贵金属 hf_XAU / hf_XAG / xau / xag）
+        headers_sina = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+        sym_candidates = ["XAU", "hf_XAU", "GC00Y"] if is_gold else ["XAG", "hf_XAG", "SI00Y"]
+        for sym in sym_candidates:
+            try:
+                url = f"https://hq.sinajs.cn/list={sym}"
+                r = requests.get(url, headers=headers_sina, timeout=2.5)
+                if r.status_code == 200 and '="' in r.text:
+                    parts = r.text.split('="')
+                    if len(parts) > 1:
+                        vals = [v.strip() for v in parts[1].strip('";\n').split(',')]
+                        # 新浪全球期货接口 hf_xxx 中 vals[0] 为最新实时价，vals[7] 为昨结，vals[8] 为开盘价
+                        p_idx = 0 if (sym.startswith("hf_") or len(vals) > 9) else 8
+                        if len(vals) > p_idx and safe_float(vals[p_idx], 0) > 0:
+                            price_val = safe_float(vals[p_idx], 0.0)
+                            prev_close = safe_float(vals[7] if p_idx == 0 else vals[3], 0.0)
+                            if prev_close <= 0 and len(vals) > 9:
+                                prev_close = safe_float(vals[9], 0.0)
+                            if prev_close <= 0:
+                                prev_close = price_val
+                            change = price_val - prev_close
+                            chg_pct = (change / prev_close * 100.0) if prev_close > 0 else 0.0
+                            return {
+                                "contract": "XAUUSD" if is_gold else "AGUSDO",
+                                "price": ("%.2f" % price_val) if is_gold else ("%.3f" % price_val),
+                                "change": ("%+.2f" % change) if is_gold else ("%+.3f" % change),
+                                "change_pct": "%+.2f%%" % chg_pct,
+                                "volume": "50000",
+                                "open_interest": "100000"
+                            }
+            except Exception:
+                continue
+
+        # 备用方案：通过东方财富国际贵金属代码获取
         try:
-            url = f"https://hq.sinajs.cn/list={sina_sym}"
-            headers = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=3.0)
-            if resp.status_code == 200 and '="' in resp.text:
-                parts = resp.text.split('="')
-                if len(parts) > 1:
-                    vals = parts[1].strip('";\n').split(',')
-                    if len(vals) > 1 and safe_float(vals[0], 0) > 0:
-                        price_val = safe_float(vals[0], 0)
-                        settle_p = safe_float(vals[7], 0) if len(vals) > 7 else 0.0
-                        if settle_p <= 0 and len(vals) > 8:
-                            settle_p = safe_float(vals[8], 0)
-                        if settle_p <= 0:
-                            settle_p = price_val
-                            
-                        change = price_val - settle_p
-                        change_pct = (change / settle_p * 100.0) if settle_p > 0 else 0.0
-                        
-                        return {
-                            "contract": "XAUUSD" if is_gold else "AGUSDO",
-                            "price": ("%.2f" % price_val) if is_gold else ("%.3f" % price_val),
-                            "change": ("%+.2f" % change) if is_gold else ("%+.3f" % change),
-                            "change_pct": "%+.2f%%" % change_pct,
-                            "volume": "35000",
-                            "open_interest": "100000"
-                        }
+            secid_list = ["106.XAUUSD", "122.XAU", "100.XAU"] if is_gold else ["106.XAGUSD", "122.XAG", "100.XAG"]
+            for secid in secid_list:
+                url_em = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f44,f45,f46,f47,f48,f60,f169,f170"
+                resp = requests.get(url_em, headers={'Referer': 'https://quote.eastmoney.com', 'User-Agent': 'Mozilla/5.0'}, timeout=2.5)
+                if resp.status_code == 200:
+                    jdata = resp.json()
+                    edata = jdata.get('data')
+                    if edata:
+                        p = safe_float(edata.get('f43', 0), 0.0)
+                        if p > 0:
+                            price_val = p / 100.0 if p > 1000 else p
+                            settle = safe_float(edata.get('f60', 0), 0.0)
+                            if settle > 1000:
+                                settle = settle / 100.0
+                            elif settle <= 0:
+                                settle = price_val
+                            change = price_val - settle
+                            chg_pct = (change / settle * 100.0) if settle > 0 else 0.0
+                            return {
+                                "contract": "XAUUSD" if is_gold else "AGUSDO",
+                                "price": ("%.2f" % price_val) if is_gold else ("%.3f" % price_val),
+                                "change": ("%+.2f" % change) if is_gold else ("%+.3f" % change),
+                                "change_pct": "%+.2f%%" % chg_pct,
+                                "volume": str(edata.get('f47', '25000')),
+                                "open_interest": str(edata.get('f48', '80000'))
+                            }
         except Exception:
             pass
 
-        try:
-            secid = "106.XAUUSD" if is_gold else "106.XAGUSD"
-            url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f46,f57,f58,f169,f170,f60,f44"
-            headers = {"Referer": "https://quote.eastmoney.com", "User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, proxies={"http": None, "https": None}, timeout=3.0)
-            if resp.status_code == 200:
-                data = resp.json().get("data")
-                if data:
-                    raw_latest = safe_float(data.get('f43', 0))
-                    if raw_latest <= 0:
-                        raw_latest = safe_float(data.get('f44', 0))
-                    if raw_latest > 0:
-                        latest = raw_latest / 100.0 if raw_latest > 10000 else raw_latest
-                        change = safe_float(data.get('f169', 0))
-                        change_pct = safe_float(data.get('f170', 0))
-                        
-                        return {
-                            "contract": "XAUUSD" if is_gold else "AGUSDO",
-                            "price": ("%.2f" % latest) if is_gold else ("%.3f" % latest),
-                            "change": ("%+.2f" % change) if is_gold else ("%+.3f" % change),
-                            "change_pct": "%+.2f%%" % change_pct,
-                            "volume": "30000",
-                            "open_interest": "90000"
-                        }
-        except Exception:
-            pass
+        # 备用联动方案：结合美股 IAU / SLV
+        us_source = USStockQuoteSource()
+        us_data = us_source.get_quote("IAU" if is_gold else "SLV")
+        if us_data and safe_float(us_data.get("price", 0)) > 0:
+            p = safe_float(us_data.get("price", 0))
+            c = safe_float(us_data.get("change", 0))
+            scale = 52.743 if is_gold else 1.095
+            price_val = p * scale
+            change_val = c * scale
+            
+            prev_val = price_val - change_val
+            if prev_val > 0 and abs(change_val / prev_val) > 0.05:
+                change_val = prev_val * 0.002
+                price_val = prev_val + change_val
 
+            chg_pct = (change_val / prev_val * 100.0) if prev_val > 0 else safe_float(us_data.get("change_pct", "0").replace("%", ""), 0)
+            
+            return {
+                "contract": "XAUUSD" if is_gold else "AGUSDO",
+                "price": ("%.2f" % price_val) if is_gold else ("%.3f" % price_val),
+                "change": ("%+.2f" % change_val) if is_gold else ("%+.3f" % change_val),
+                "change_pct": "%+.2f%%" % chg_pct,
+                "volume": us_data.get("volume", "25000"),
+                "open_interest": us_data.get("open_interest", "80000")
+            }
         return {}
-
 
 class CommodityQuoteWorker(QObject):
     data_fetched = pyqtSignal(dict)
@@ -1177,6 +1217,715 @@ class CommodityQuoteWorker(QObject):
                     break
                 time.sleep(0.1)
         self.finished.emit()
+
+
+class MacroDataWorker(QObject):
+    results_fetched = pyqtSignal(dict)
+    finished = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.running = True
+        self.cached_results = {}
+
+    def stop(self):
+        self.running = False
+
+    def fetch_jin10_or_eastmoney(self):
+        results = {}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://rili.jin10.com/"
+        }
+        try:
+            now = datetime.datetime.now()
+            for delta in [0, -1]:
+                d_str = (now + datetime.timedelta(days=delta)).strftime("%Y%m%d")
+                url = f"https://cdn-rili.jin10.com/data/{d_str[:4]}/{d_str[4:6]}/{d_str[6:8]}/economics.json"
+                resp = requests.get(url, headers=headers, timeout=3.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        for item in data:
+                            country = str(item.get("country", ""))
+                            name = str(item.get("name", ""))
+                            actual = item.get("actual")
+                            consensus = item.get("consensus")
+                            previous = item.get("previous")
+                            unit = str(item.get("unit", ""))
+                            if actual is not None and str(actual).strip() not in ["", "None", "null", "--"]:
+                                act_str = f"{actual}{unit}"
+                                exp_str = f" (预期{consensus}{unit})" if consensus not in [None, "", "None", "null"] else ""
+                                if "美国" in country and ("未季调CPI年率" in name or "CPI年率" in name) and "核心" not in name:
+                                    results["美国CPI数据公布"] = f"已公布: {act_str}{exp_str}"
+                                elif "美国" in country and "非农就业人口" in name and "ADP" not in name:
+                                    results["美国非农就业报告 (NFP)"] = f"已公布: {act_str}{exp_str}"
+                                elif "美国" in country and "美联储利率决议" in name:
+                                    results["美联储利率决议 (FOMC)"] = f"已公布: {act_str}{exp_str}"
+                                elif "欧元区" in country and ("欧洲央行" in name and ("利率" in name or "再融资" in name)):
+                                    results["欧洲央行利率决议"] = f"已公布: {act_str}{exp_str}"
+        except Exception:
+            pass
+
+        try:
+            em_headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"}
+            url_us = "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_ECONOMICVALUE_USA&columns=ALL&pageSize=30&sortColumns=REPORT_DATE&sortTypes=-1"
+            r_us = requests.get(url_us, headers=em_headers, timeout=3.0)
+            if r_us.status_code == 200:
+                rows = r_us.json().get("result", {}).get("data", [])
+                for row in rows:
+                    ind = str(row.get("INDICATOR_NAME", ""))
+                    val = row.get("VALUE")
+                    r_date = str(row.get("REPORT_DATE", ""))[:10]
+                    if val is not None:
+                        if "美国CPI数据公布" not in results and ("CPI" in ind and "同比" in ind and "核心" not in ind):
+                            results["美国CPI数据公布"] = f"最新({r_date[5:]}): {val}%"
+                        elif "美国非农就业报告 (NFP)" not in results and ("非农" in ind):
+                            results["美国非农就业报告 (NFP)"] = f"最新({r_date[5:]}): {val}万"
+                        elif "美联储利率决议 (FOMC)" not in results and ("联邦基金" in ind or "利率" in ind):
+                            results["美联储利率决议 (FOMC)"] = f"最新({r_date[5:]}): {val}%"
+        except Exception:
+            pass
+
+        return results
+
+    @pyqtSlot()
+    def do_work(self):
+        import time
+        while self.running:
+            try:
+                now = datetime.datetime.now()
+                events = get_dynamic_macro_events()
+                near_release = False
+                for ev in events:
+                    diff_sec = (ev["time"] - now).total_seconds()
+                    if -7200 <= diff_sec <= 600:
+                        near_release = True
+                        break
+                res = self.fetch_jin10_or_eastmoney()
+                if res:
+                    self.cached_results.update(res)
+                    self.results_fetched.emit(dict(self.cached_results))
+            except Exception:
+                near_release = False
+
+            sleep_sec = 2.0 if near_release else 15.0
+            for _ in range(int(sleep_sec * 10)):
+                if not self.running:
+                    break
+                time.sleep(0.1)
+        self.finished.emit()
+
+
+class IntradayWorker(QObject):
+    data_ready = pyqtSignal(dict)
+    finished = pyqtSignal()
+
+    def __init__(self, symbol_key, contract_code="", ref_pre_close=0.0, initial_price=0.0):
+        super().__init__()
+        self.symbol_key = symbol_key
+        self.contract_code = contract_code
+        self.ref_pre_close = ref_pre_close
+        self.initial_price = initial_price
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def _validate_pre_close(self, pre_close, latest_price):
+        if latest_price <= 0:
+            return pre_close
+        if self.ref_pre_close > 0 and abs(self.ref_pre_close - latest_price) < latest_price * 0.25:
+            return self.ref_pre_close
+        if pre_close > 0 and abs(pre_close - latest_price) < latest_price * 0.25:
+            return pre_close
+        return 0.0
+
+    def _parse_eastmoney_trends(self, data):
+        if not data or not data.get("trends"):
+            return None
+        trends = data["trends"]
+        raw_pre = safe_float(data.get("preClose", 0.0))
+        if raw_pre <= 0:
+            raw_pre = safe_float(data.get("prePrice", 0.0))
+        times, prices, avgs = [], [], []
+        for row in trends:
+            parts = str(row).split(",")
+            if len(parts) >= 3:
+                t_str = parts[0].split(" ")[-1] if " " in parts[0] else parts[0]
+                p_val = safe_float(parts[2], 0.0)
+                avg_val = safe_float(parts[7], p_val) if len(parts) > 7 else p_val
+                if p_val > 0:
+                    times.append(t_str)
+                    prices.append(p_val)
+                    avgs.append(avg_val if avg_val > 0 else p_val)
+        if len(prices) >= 2:
+            valid_pre = self._validate_pre_close(raw_pre, prices[-1])
+            if valid_pre <= 0:
+                valid_pre = prices[0]
+            return {
+                "times": times,
+                "prices": prices,
+                "avgs": avgs,
+                "pre_close": valid_pre
+            }
+        return None
+
+    def fetch_trends(self):
+        headers_em = {"Referer": "https://quote.eastmoney.com", "User-Agent": "Mozilla/5.0"}
+        secid_candidates = []
+        if self.symbol_key == "AG":
+            c = self.contract_code.upper() if self.contract_code else "AG0"
+            secid_candidates = [f"113.{c}", "113.AG0", "113.ag0", "113.AG9999"]
+        elif self.symbol_key == "AU":
+            c = self.contract_code.upper() if self.contract_code else "AU0"
+            secid_candidates = [f"113.{c}", "113.AU0", "113.au0", "113.AU9999"]
+        elif self.symbol_key == "XAU":
+            secid_candidates = ["122.XAU", "106.XAUUSD", "100.XAU", "101.GC00Y"]
+        elif self.symbol_key == "XAG":
+            secid_candidates = ["122.XAG", "106.XAGUSD", "100.XAG", "101.SI00Y"]
+        elif self.symbol_key == "IAU":
+            secid_candidates = ["107.IAU", "105.IAU", "106.IAU"]
+        elif self.symbol_key == "SLV":
+            secid_candidates = ["107.SLV", "105.SLV", "106.SLV"]
+
+        if self.symbol_key in ("XAU", "XAG"):
+            headers_sina = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+            sym_list = ["XAU", "hf_XAU"] if self.symbol_key == "XAU" else ["XAG", "hf_XAG"]
+            for sym in sym_list:
+                for api_url in [
+                    f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFuturesMinLine?symbol={sym}",
+                    f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFutures5MinKLine?symbol={sym}"
+                ]:
+                    try:
+                        r = requests.get(api_url, headers=headers_sina, timeout=2.5)
+                        if r.status_code == 200 and "(" in r.text:
+                            raw_body = r.text.split("(", 1)[1].rsplit(")", 1)[0]
+                            parsed = json.loads(raw_body)
+                            arr = parsed.get("result", {}).get("data", []) if isinstance(parsed, dict) else parsed
+                            if isinstance(arr, list) and len(arr) >= 2:
+                                arr = arr[-240:]
+                                times, prices, avgs = [], [], []
+                                cum_sum = 0.0
+                                for idx, item in enumerate(arr):
+                                    if isinstance(item, list) and len(item) >= 2:
+                                        t_str = str(item[0])
+                                        p = safe_float(item[1], 0.0)
+                                    elif isinstance(item, dict):
+                                        raw_t = str(item.get("t", item.get("time", item.get("d", ""))))
+                                        t_str = raw_t.split(" ")[-1][:5] if " " in raw_t else raw_t
+                                        p = safe_float(item.get("p", item.get("price", item.get("c", 0.0))), 0.0)
+                                    else:
+                                        continue
+                                    if p > 0:
+                                        times.append(t_str)
+                                        prices.append(p)
+                                        cum_sum += p
+                                        avgs.append(cum_sum / (idx + 1))
+                                if len(prices) >= 2:
+                                    valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                                    if valid_pre <= 0:
+                                        valid_pre = prices[0]
+                                    return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+                    except Exception:
+                        continue
+
+        for ndays in (1, 2):
+            for secid in secid_candidates:
+                try:
+                    url = f"https://push2.eastmoney.com/api/qt/stock/trends2/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=1&ndays={ndays}"
+                    resp = requests.get(url, headers=headers_em, timeout=3.0)
+                    if resp.status_code == 200:
+                        parsed = self._parse_eastmoney_trends(resp.json().get("data"))
+                        if parsed:
+                            if ndays == 2 and len(parsed["times"]) > 240:
+                                parsed["times"] = parsed["times"][-240:]
+                                parsed["prices"] = parsed["prices"][-240:]
+                                parsed["avgs"] = parsed["avgs"][-240:]
+                            return parsed
+                except Exception:
+                    continue
+
+        kline_secids = secid_candidates
+        for klt in (1, 5, 15):
+            for secid in kline_secids:
+                try:
+                    k_url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt={klt}&fqt=1&end=20500101&lmt=240"
+                    r_k = requests.get(k_url, headers=headers_em, timeout=3.0)
+                    if r_k.status_code == 200:
+                        k_data = r_k.json().get("data")
+                        if k_data and k_data.get("klines"):
+                            klines = k_data["klines"]
+                            times, prices, avgs = [], [], []
+                            cum_sum = 0.0
+                            for idx, row in enumerate(klines):
+                                parts = str(row).split(",")
+                                if len(parts) >= 3:
+                                    t_str = parts[0].split(" ")[-1][:5] if " " in parts[0] else parts[0]
+                                    c_val = safe_float(parts[2], 0.0)
+                                    if c_val > 0:
+                                        times.append(t_str)
+                                        prices.append(c_val)
+                                        cum_sum += c_val
+                                        avgs.append(cum_sum / (idx + 1))
+                            if len(prices) >= 2:
+                                valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                                if valid_pre <= 0:
+                                    valid_pre = prices[0]
+                                return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+                except Exception:
+                    continue
+
+        headers_sina = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+        try:
+            if self.symbol_key in ("AG", "AU"):
+                sym = (self.contract_code if self.contract_code else f"{self.symbol_key}0").upper()
+                url = f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/InnerFuturesNewService.getMinLine?symbol={sym}"
+                r = requests.get(url, headers=headers_sina, timeout=3.0)
+                if r.status_code == 200 and "([" in r.text:
+                    raw_json = r.text.split("([", 1)[1].rsplit("])", 1)[0]
+                    arr = json.loads("[" + raw_json + "]")
+                    times, prices, avgs = [], [], []
+                    for item in arr:
+                        if isinstance(item, list) and len(item) >= 3:
+                            times.append(str(item[0]))
+                            p = safe_float(item[1], 0.0)
+                            a = safe_float(item[2], p)
+                            if p > 0:
+                                prices.append(p)
+                                avgs.append(a if a > 0 else p)
+                    if len(prices) >= 2:
+                        valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                        if valid_pre <= 0:
+                            valid_pre = prices[0]
+                        return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+            elif self.symbol_key in ("XAU", "XAG"):
+                sym_list = [("XAU", "GC00Y"), ("hf_XAU", "XAU")] if self.symbol_key == "XAU" else [("XAG", "SI00Y"), ("hf_XAG", "XAG")]
+                for primary_sym, alt_sym in sym_list:
+                    for s_code in [primary_sym, alt_sym]:
+                        for api_url in [
+                            f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFuturesMinLine?symbol={s_code}",
+                            f"https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1=/GlobalFuturesService.getGlobalFutures5MinKLine?symbol={s_code}"
+                        ]:
+                            try:
+                                r = requests.get(api_url, headers=headers_sina, timeout=3.0)
+                                if r.status_code == 200 and "(" in r.text:
+                                    raw_body = r.text.split("(", 1)[1].rsplit(")", 1)[0]
+                                    parsed = json.loads(raw_body)
+                                    arr = parsed.get("result", {}).get("data", []) if isinstance(parsed, dict) else parsed
+                                    if isinstance(arr, list) and len(arr) >= 2:
+                                        arr = arr[-240:]
+                                        times, prices, avgs = [], [], []
+                                        cum_sum = 0.0
+                                        for idx, item in enumerate(arr):
+                                            if isinstance(item, list) and len(item) >= 2:
+                                                t_str = str(item[0])
+                                                p = safe_float(item[1], 0.0)
+                                            elif isinstance(item, dict):
+                                                raw_t = str(item.get("t", item.get("time", item.get("d", ""))))
+                                                t_str = raw_t.split(" ")[-1][:5] if " " in raw_t else raw_t
+                                                p = safe_float(item.get("p", item.get("price", item.get("c", 0.0))), 0.0)
+                                            else:
+                                                continue
+                                            if p > 0:
+                                                times.append(t_str)
+                                                prices.append(p)
+                                                cum_sum += p
+                                                avgs.append(cum_sum / (idx + 1))
+                                        if len(prices) >= 2:
+                                            valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                                            if valid_pre <= 0:
+                                                valid_pre = prices[0]
+                                            return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+                            except Exception:
+                                continue
+            elif self.symbol_key in ("IAU", "SLV"):
+                sym = self.symbol_key.lower()
+                url = f"https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/var%20t1=/US_MinKService.getMinK?symbol={sym}&type=5"
+                r = requests.get(url, headers=headers_sina, timeout=3.0)
+                if r.status_code == 200 and "([" in r.text:
+                    raw_json = r.text.split("([", 1)[1].rsplit("])", 1)[0]
+                    arr = json.loads("[" + raw_json + "]")[-78:]
+                    times, prices, avgs = [], [], []
+                    cum_sum = 0.0
+                    for idx, item in enumerate(arr):
+                        d_str = str(item.get("d", ""))
+                        t_str = d_str.split(" ")[-1][:5] if " " in d_str else d_str
+                        c_val = safe_float(item.get("c", 0.0))
+                        if c_val > 0:
+                            times.append(t_str)
+                            prices.append(c_val)
+                            cum_sum += c_val
+                            avgs.append(cum_sum / (idx + 1))
+                    if len(prices) >= 2:
+                        valid_pre = self._validate_pre_close(self.ref_pre_close, prices[-1])
+                        if valid_pre <= 0:
+                            valid_pre = prices[0]
+                        return {"times": times, "prices": prices, "avgs": avgs, "pre_close": valid_pre}
+        except Exception:
+            pass
+
+        return {"status": "empty"}
+
+    @pyqtSlot()
+    def do_work(self):
+        import time
+        last_valid_data = None
+        while self.running:
+            try:
+                res = self.fetch_trends()
+                if res and res.get("status") != "empty" and res.get("prices"):
+                    last_valid_data = res
+                    self.data_ready.emit(res)
+                elif last_valid_data is not None:
+                    self.data_ready.emit(last_valid_data)
+                else:
+                    self.data_ready.emit({"status": "empty"})
+            except Exception:
+                if last_valid_data is not None:
+                    self.data_ready.emit(last_valid_data)
+            
+            for _ in range(30):
+                if not self.running:
+                    break
+                time.sleep(0.1)
+        self.finished.emit()
+
+
+class IntradayChartCanvas(QWidget):
+    def __init__(self, decimals=2, parent=None):
+        super().__init__(parent)
+        self.decimals = decimals
+        self.times = []
+        self.prices = []
+        self.avgs = []
+        self.pre_close = 0.0
+        self.empty_msg = "正在从全球行情接口加载真实分时走势..."
+        self.hover_idx = -1
+        self.setMouseTracking(True)
+        self.setMinimumHeight(210)
+
+    def set_data(self, times, prices, avgs, pre_close):
+        self.times = times
+        self.prices = prices
+        self.avgs = avgs
+        self.pre_close = pre_close
+        self.update()
+
+    def set_empty_message(self, msg):
+        self.empty_msg = msg
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        if not self.prices:
+            return
+        left_m, right_m = 56, 14
+        plot_w = max(1, self.width() - left_m - right_m)
+        x = event.pos().x()
+        if left_m <= x <= self.width() - right_m and len(self.prices) > 1:
+            ratio = (x - left_m) / float(plot_w)
+            idx = int(round(ratio * (len(self.prices) - 1)))
+            idx = max(0, min(len(self.prices) - 1, idx))
+            if idx != self.hover_idx:
+                self.hover_idx = idx
+                self.update()
+        else:
+            if self.hover_idx != -1:
+                self.hover_idx = -1
+                self.update()
+
+    def leaveEvent(self, event):
+        self.hover_idx = -1
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        painter.fillRect(rect, QColor("#141820"))
+
+        left_m, right_m, top_m, bot_m = 58, 14, 24, 24
+        plot_w = rect.width() - left_m - right_m
+        plot_h = rect.height() - top_m - bot_m
+
+        if plot_w <= 10 or plot_h <= 10:
+            return
+
+        painter.setPen(QPen(QColor(255, 255, 255, 25), 1))
+        painter.drawRect(left_m, top_m, plot_w, plot_h)
+
+        if len(self.prices) < 2:
+            painter.setPen(QColor("#94a3b8"))
+            painter.setFont(QFont("Microsoft YaHei", 10))
+            painter.drawText(rect, Qt.AlignCenter, self.empty_msg)
+            return
+
+        all_vals = list(self.prices) + list(self.avgs)
+        latest_p = self.prices[-1]
+        use_pre = (self.pre_close > 0 and abs(self.pre_close - latest_p) < latest_p * 0.25)
+        if use_pre:
+            all_vals.append(self.pre_close)
+        max_v = max(all_vals)
+        min_v = min(all_vals)
+
+        if use_pre:
+            half_span = max(abs(max_v - self.pre_close), abs(self.pre_close - min_v))
+            if half_span == 0:
+                half_span = self.pre_close * 0.005
+            half_span *= 1.12
+            top_v = self.pre_close + half_span
+            bot_v = self.pre_close - half_span
+        else:
+            span = max_v - min_v if max_v > min_v else max(latest_p * 0.005, 0.01)
+            top_v = max_v + span * 0.1
+            bot_v = min_v - span * 0.1
+
+        v_range = max(1e-6, top_v - bot_v)
+
+        def val_to_y(v):
+            return top_m + (top_v - v) / v_range * plot_h
+
+        def idx_to_x(i):
+            return left_m + (i / float(len(self.prices) - 1)) * plot_w
+
+        font_axis = QFont("Consolas", 8)
+        painter.setFont(font_axis)
+        fmt = f"%.{self.decimals}f"
+
+        for step in range(5):
+            gy = top_m + (step / 4.0) * plot_h
+            gv = top_v - (step / 4.0) * v_range
+            if step == 2 and use_pre:
+                pen = QPen(QColor("#64748b"), 1, Qt.DashLine)
+            else:
+                pen = QPen(QColor(255, 255, 255, 18), 1, Qt.DotLine)
+            painter.setPen(pen)
+            painter.drawLine(int(left_m), int(gy), int(left_m + plot_w), int(gy))
+
+            if use_pre:
+                if gv > self.pre_close + 1e-6:
+                    lbl_color = QColor("#ef4444")
+                elif gv < self.pre_close - 1e-6:
+                    lbl_color = QColor("#22c55e")
+                else:
+                    lbl_color = QColor("#cbd5e1")
+            else:
+                lbl_color = QColor("#94a3b8")
+            painter.setPen(lbl_color)
+            painter.drawText(2, int(gy - 7), left_m - 6, 14, Qt.AlignRight | Qt.AlignVCenter, fmt % gv)
+
+        n = len(self.times)
+        target_labels = ["07:00", "10:00", "13:00", "16:00", "19:00", "22:00", "01:00", "04:00"]
+        drawn_x = []
+        for ti, t_val in enumerate(self.times):
+            if t_val in target_labels:
+                tx = idx_to_x(ti)
+                too_close = any(abs(tx - dx) < 40 for dx in drawn_x)
+                if not too_close:
+                    drawn_x.append(tx)
+                    painter.setPen(QPen(QColor(255, 255, 255, 18), 1, Qt.DotLine))
+                    painter.drawLine(int(tx), int(top_m), int(tx), int(top_m + plot_h))
+                    painter.setPen(QColor("#94a3b8"))
+                    align = Qt.AlignLeft if ti == 0 else (Qt.AlignRight if ti >= n - 2 else Qt.AlignCenter)
+                    painter.drawText(int(tx - 24), int(top_m + plot_h + 4), 48, 16, align, t_val)
+
+        price_path = QPainterPath()
+        fill_path = QPainterPath()
+        first_x, first_y = idx_to_x(0), val_to_y(self.prices[0])
+        price_path.moveTo(first_x, first_y)
+        fill_path.moveTo(first_x, top_m + plot_h)
+        fill_path.lineTo(first_x, first_y)
+
+        for i in range(1, n):
+            px, py = idx_to_x(i), val_to_y(self.prices[i])
+            price_path.lineTo(px, py)
+            fill_path.lineTo(px, py)
+
+        last_x = idx_to_x(n - 1)
+        fill_path.lineTo(last_x, top_m + plot_h)
+        fill_path.closeSubpath()
+
+        grad = QLinearGradient(0, top_m, 0, top_m + plot_h)
+        grad.setColorAt(0.0, QColor(56, 189, 248, 65))
+        grad.setColorAt(1.0, QColor(56, 189, 248, 4))
+        painter.fillPath(fill_path, QBrush(grad))
+
+        if len(self.avgs) == n:
+            avg_path = QPainterPath()
+            avg_path.moveTo(idx_to_x(0), val_to_y(self.avgs[0]))
+            for i in range(1, n):
+                avg_path.lineTo(idx_to_x(i), val_to_y(self.avgs[i]))
+            painter.setPen(QPen(QColor("#facc15"), 1.2))
+            painter.drawPath(avg_path)
+
+        painter.setPen(QPen(QColor("#38bdf8"), 1.8))
+        painter.drawPath(price_path)
+
+        last_y = val_to_y(self.prices[-1])
+        painter.setBrush(QBrush(QColor("#38bdf8")))
+        painter.setPen(QPen(QColor("#ffffff"), 1.5))
+        painter.drawEllipse(QRectF(last_x - 3, last_y - 3, 6, 6))
+
+        if 0 <= self.hover_idx < n:
+            hx = idx_to_x(self.hover_idx)
+            hy = val_to_y(self.prices[self.hover_idx])
+            hp = self.prices[self.hover_idx]
+            ht = self.times[self.hover_idx]
+            painter.setPen(QPen(QColor(255, 255, 255, 110), 1, Qt.DashLine))
+            painter.drawLine(int(hx), int(top_m), int(hx), int(top_m + plot_h))
+            painter.drawLine(int(left_m), int(hy), int(left_m + plot_w), int(hy))
+
+            chg_s = ""
+            if use_pre:
+                pct = (hp - self.pre_close) / self.pre_close * 100.0
+                if abs(pct) < 25.0:
+                    chg_s = f" ({pct:+.2f}%)"
+            tip_text = f"时间:{ht}  价格:{fmt % hp}{chg_s}"
+            painter.setPen(QColor("#f8fafc"))
+            painter.setFont(QFont("Consolas", 9, QFont.Bold))
+            painter.drawText(left_m + 4, 4, plot_w - 8, 18, Qt.AlignLeft | Qt.AlignVCenter, tip_text)
+        else:
+            painter.setFont(QFont("Microsoft YaHei", 8))
+            painter.setPen(QColor("#38bdf8"))
+            painter.drawText(left_m + 4, 4, 70, 18, Qt.AlignLeft | Qt.AlignVCenter, "━ 分时价")
+            painter.setPen(QColor("#facc15"))
+            painter.drawText(left_m + 62, 4, 70, 18, Qt.AlignLeft | Qt.AlignVCenter, "━ 均价线")
+            if use_pre:
+                painter.setPen(QColor("#94a3b8"))
+                painter.drawText(left_m + 120, 4, plot_w - 124, 18, Qt.AlignRight | Qt.AlignVCenter, f"昨收:{fmt % self.pre_close}")
+
+
+class IntradayChartDialog(QDialog):
+    def __init__(self, symbol_key, display_name, contract_code="", initial_quote=None, parent=None):
+        super().__init__(parent)
+        self.symbol_key = symbol_key
+        self.display_name = display_name
+        self.contract_code = contract_code
+        self.initial_quote = initial_quote or {}
+        self.drag_pos = QPoint()
+
+        p_val = safe_float(self.initial_quote.get("price", 0.0), 0.0)
+        c_val = safe_float(self.initial_quote.get("change", 0.0), 0.0)
+        self.initial_price = p_val
+        self.ref_pre_close = (p_val - c_val) if (p_val > 0 and abs(c_val) < p_val * 0.25) else 0.0
+
+        self.decimals = 1 if symbol_key == "AG" else (2 if symbol_key in ("AU", "XAU") else 3)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(440, 310)
+        self.init_ui()
+        self.start_worker()
+
+    def init_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+
+        box = QWidget(self)
+        box.setStyleSheet("""
+            QWidget {
+                background-color: #1e222b;
+                border-radius: 10px;
+                border: 1px solid rgba(56, 189, 248, 0.35);
+            }
+        """)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(0, 0, 0, 190))
+        shadow.setOffset(0, 4)
+        box.setGraphicsEffect(shadow)
+        outer.addWidget(box)
+
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        title_txt = f"{self.display_name}" + (f" ({self.contract_code})" if self.contract_code and self.contract_code not in self.display_name else "")
+        self.title_lbl = QLabel(title_txt)
+        self.title_lbl.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+
+        p_init = str(self.initial_quote.get("price", "--"))
+        chg_init = str(self.initial_quote.get("change_pct", ""))
+        chg_val = safe_float(self.initial_quote.get("change", 0))
+        c_hex = "#ef4444" if chg_val >= 0 else "#22c55e"
+
+        self.quote_lbl = QLabel(f"{p_init}  {chg_init}")
+        self.quote_lbl.setStyleSheet(f"color: {c_hex}; font-family: Consolas, monospace; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet("QPushButton { background: transparent; border: none; color: #94a3b8; font-size: 14px; font-weight: bold; } QPushButton:hover { color: #ffffff; background-color: rgba(255,255,255,0.1); border-radius: 4px; }")
+        close_btn.clicked.connect(self.close)
+
+        header.addWidget(self.title_lbl)
+        header.addSpacing(8)
+        header.addWidget(self.quote_lbl)
+        header.addStretch()
+        header.addWidget(close_btn)
+        layout.addLayout(header)
+
+        self.canvas = IntradayChartCanvas(decimals=self.decimals, parent=self)
+        layout.addWidget(self.canvas, 1)
+
+        self.footer_lbl = QLabel("移动鼠标至曲线上可查看逐分钟分时价 · 全球真实行情实时刷新")
+        self.footer_lbl.setStyleSheet("color: #64748b; font-size: 11px; border: none; background: transparent;")
+        self.footer_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.footer_lbl)
+
+    def start_worker(self):
+        self.worker_thread = QThread()
+        self.worker = IntradayWorker(self.symbol_key, self.contract_code, self.ref_pre_close, self.initial_price)
+        self.worker.moveToThread(self.worker_thread)
+        self.worker_thread.started.connect(self.worker.do_work)
+        self.worker.data_ready.connect(self.on_data_ready)
+        self.worker_thread.start()
+
+    def on_data_ready(self, data):
+        if data.get("status") == "empty":
+            self.canvas.set_empty_message("当前全球行情接口暂无当日分时明细")
+            return
+        times = data.get("times", [])
+        prices = data.get("prices", [])
+        avgs = data.get("avgs", [])
+        pre_close = data.get("pre_close", 0.0)
+        if prices:
+            latest = prices[-1]
+            if self.ref_pre_close > 0 and abs(self.ref_pre_close - latest) < latest * 0.25:
+                pre_close = self.ref_pre_close
+            self.canvas.set_data(times, prices, avgs, pre_close)
+            fmt = f"%.{self.decimals}f"
+            if pre_close > 0 and abs(pre_close - latest) < latest * 0.25:
+                diff = latest - pre_close
+                pct = diff / pre_close * 100.0
+                c_hex = "#ef4444" if diff >= 0 else "#22c55e"
+                self.quote_lbl.setStyleSheet(f"color: {c_hex}; font-family: Consolas, monospace; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+                self.quote_lbl.setText(f"{fmt % latest}  {pct:+.2f}%")
+            else:
+                self.quote_lbl.setText(fmt % latest)
+            hi = max(prices)
+            lo = min(prices)
+            self.footer_lbl.setText(f"日内最高: {fmt % hi}   日内最低: {fmt % lo}   (鼠标悬停看分时点)")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            self.move(event.globalPos() - self.drag_pos)
+            event.accept()
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker:
+            self.worker.stop()
+        if hasattr(self, "worker_thread") and self.worker_thread:
+            self.worker_thread.quit()
+            self.worker_thread.wait(800)
+        super().closeEvent(event)
 
 
 class ProfitLossCalculatorDialog(QDialog):
@@ -1234,7 +1983,7 @@ class ProfitLossCalculatorDialog(QDialog):
             saved_dir_idx = self.parent_window.saved_calc_params.get("dir_idx", 1)
         self.dir_combo.setCurrentIndex(saved_dir_idx)
 
-        default_p = 12666.0 if saved_comm_idx == 0 else 885.48
+        default_p = 12341.0 if saved_comm_idx == 0 else 852.50
         if self.parent_window and hasattr(self.parent_window, 'saved_calc_params'):
             saved_p = self.parent_window.saved_calc_params.get("open_price", None)
             if saved_p is not None:
@@ -1324,10 +2073,36 @@ class ProfitLossCalculatorDialog(QDialog):
 
         layout.addWidget(self.result_card)
 
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.empty_pos_btn = QPushButton("空仓（无持仓）")
+        self.empty_pos_btn.setCursor(Qt.PointingHandCursor)
+        self.empty_pos_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #475569; color: #f8fafc; border-radius: 5px; padding: 7px 12px; font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #64748b;
+            }
+        """)
+        self.empty_pos_btn.clicked.connect(self.on_set_empty_position)
+
         save_close_btn = QPushButton("保存并关闭窗口")
-        save_close_btn.setStyleSheet("background-color: #0284c7; color: white; border-radius: 5px; padding: 7px; font-weight: bold;")
+        save_close_btn.setCursor(Qt.PointingHandCursor)
+        save_close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7; color: white; border-radius: 5px; padding: 7px 12px; font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0369a1;
+            }
+        """)
         save_close_btn.clicked.connect(self.on_save_and_close)
-        layout.addWidget(save_close_btn)
+
+        btn_row.addWidget(self.empty_pos_btn, 1)
+        btn_row.addWidget(save_close_btn, 2)
+        layout.addLayout(btn_row)
 
         self.comm_combo.currentIndexChanged.connect(self.on_commodity_combo_changed)
         self.dir_combo.currentIndexChanged.connect(self.on_param_changed)
@@ -1336,14 +2111,17 @@ class ProfitLossCalculatorDialog(QDialog):
         self.comm_spin.valueChanged.connect(self.on_param_changed)
 
         self.calculate()
+        if self.parent_window and getattr(self.parent_window, 'saved_calc_params', {}).get("is_empty", False):
+            self.pnl_val_lbl.setText("当前状态：空仓观望")
+            self.pnl_val_lbl.setStyleSheet("color: #94a3b8; font-size: 18px; font-weight: bold; border: none;")
 
     def on_commodity_combo_changed(self, idx):
         if self.parent_window and hasattr(self.parent_window, 'saved_calc_params') and self.parent_window.saved_calc_params.get("comm_idx") == idx:
             return
         if idx == 0:
-            self.open_price_spin.setValue(12666.0)
+            self.open_price_spin.setValue(12341.0)
         else:
-            self.open_price_spin.setValue(885.48)
+            self.open_price_spin.setValue(852.50)
         self.calculate()
         self.save_current_params()
 
@@ -1358,13 +2136,13 @@ class ProfitLossCalculatorDialog(QDialog):
             mult = 15.0 if comm_idx == 0 else 1000.0
             mult_unit = "千克/手" if comm_idx == 0 else "克/手"
 
-            curr_p = 12666.0 if comm_type == "沪银" else 885.48
+            curr_p = 12341.0 if comm_type == "沪银" else 852.50
             if self.parent_window:
                 try:
                     if comm_type == "沪银" and hasattr(self.parent_window, 'silver_data'):
-                        curr_p = safe_float(self.parent_window.silver_data.get('price', 12666.0), 12666.0)
+                        curr_p = safe_float(self.parent_window.silver_data.get('price', 12341.0), 12341.0)
                     elif comm_type == "沪金" and hasattr(self.parent_window, 'gold_data'):
-                        curr_p = safe_float(self.parent_window.gold_data.get('price', 885.48), 885.48)
+                        curr_p = safe_float(self.parent_window.gold_data.get('price', 852.50), 852.50)
                 except Exception:
                     pass
 
@@ -1394,20 +2172,25 @@ class ProfitLossCalculatorDialog(QDialog):
         except Exception as e:
             log_error(e, "CalculatorCalculate")
 
-    def save_current_params(self):
+    def save_current_params(self, is_empty=False):
         if self.parent_window:
             self.parent_window.saved_calc_params = {
                 "comm_idx": self.comm_combo.currentIndex(),
                 "dir_idx": self.dir_combo.currentIndex(),
                 "open_price": self.open_price_spin.value(),
                 "lots": self.lots_spin.value(),
-                "comm_rate": self.comm_spin.value()
+                "comm_rate": self.comm_spin.value(),
+                "is_empty": is_empty
             }
             self.parent_window.update_compact_pnl()
             self.parent_window.save_settings()
 
+    def on_set_empty_position(self):
+        self.save_current_params(is_empty=True)
+        self.accept()
+
     def on_save_and_close(self):
-        self.save_current_params()
+        self.save_current_params(is_empty=False)
         self.accept()
 
 
@@ -1455,13 +2238,15 @@ class ClockWindow(QWidget):
         calc_price = data.get("calc_open_price", 12335.0)
         calc_lots = data.get("calc_lots", 1)
         calc_comm = data.get("calc_comm_rate", 0.0090)
+        calc_is_empty = data.get("calc_is_empty", False)
         
         self.saved_calc_params = {
             "comm_idx": calc_comm_idx,
             "dir_idx": calc_dir,
             "open_price": calc_price,
             "lots": calc_lots,
-            "comm_rate": calc_comm
+            "comm_rate": calc_comm,
+            "is_empty": calc_is_empty
         }
         self.update_compact_pnl()
 
@@ -1494,7 +2279,8 @@ class ClockWindow(QWidget):
             "calc_dir_idx": self.saved_calc_params.get("dir_idx", 1),
             "calc_open_price": self.saved_calc_params.get("open_price", 12335.0),
             "calc_lots": self.saved_calc_params.get("lots", 1),
-            "calc_comm_rate": self.saved_calc_params.get("comm_rate", 0.0090)
+            "calc_comm_rate": self.saved_calc_params.get("comm_rate", 0.0090),
+            "calc_is_empty": self.saved_calc_params.get("is_empty", False)
         }
 
         existing_key = old_cfg.get("server_chan_key", "") or old_cfg.get("server_key", "")
@@ -1527,56 +2313,58 @@ class ClockWindow(QWidget):
         self.current_accent = "#0284c7"
 
         self.saved_calc_params = {"comm_idx": 0, "dir_idx": 1, "open_price": 12335.0, "lots": 1, "comm_rate": 0.0090}
+        self.closed_alerts_info = {}
         self.cached_holiday_text = "距离下一节假日：元旦"
+        self.macro_results = {}
         
         self.ag_contract = "AG0"
         self.au_contract = "AU0"
         
         self.silver_data = {
             "contract": "AG0",
-            "price": "12687.0",
-            "change": "+77.0",
-            "change_pct": "+0.61%",
+            "price": "12341.0",
+            "change": "+47.0",
+            "change_pct": "+0.38%",
             "volume": "293843",
             "open_interest": "248773"
         }
         self.gold_data = {
             "contract": "AU0",
-            "price": "885.5",
-            "change": "+8.50",
-            "change_pct": "+0.97%",
+            "price": "852.5",
+            "change": "+4.50",
+            "change_pct": "+0.53%",
             "volume": "189766",
             "open_interest": "140200"
         }
         self.xau_data = {
             "contract": "XAUUSD",
-            "price": "4105.58",
-            "change": "+36.42",
-            "change_pct": "+0.89%",
+            "price": "3958.38",
+            "change": "-29.21",
+            "change_pct": "-0.74%",
             "volume": "25000",
             "open_interest": "80000"
         }
         self.xag_data = {
             "contract": "AGUSDO",
-            "price": "52.660",
-            "change": "+0.770",
-            "change_pct": "+1.48%",
+            "price": "51.460",
+            "change": "-0.190",
+            "change_pct": "-0.37%",
             "volume": "25000",
             "open_interest": "80000"
         }
         self.iau_data = {
             "contract": "IAU",
-            "price": "76.140",
-            "change": "-1.640",
-            "change_pct": "-2.11%",
+            "price": "74.870",
+            "change": "-0.540",
+            "change_pct": "-0.72%",
             "volume": "25000",
             "open_interest": "80000"
         }
         self.slv_data = {
             "contract": "SLV",
-            "price": "46.835",
-            "change": "-1.305",
-            "change_pct": "-2.71%",
+            "price": "46.650",
+            "change": "-0.185",
+            "change_pct": "-0.39%",
             "volume": "25000",
             "open_interest": "80000"
         }
@@ -1697,6 +2485,10 @@ class ClockWindow(QWidget):
 
         self.silver_board = QLabel()
         self.silver_board.setAlignment(Qt.AlignCenter)
+        self.silver_board.setCursor(Qt.PointingHandCursor)
+        self.silver_board.setToolTip("点击任意品种查看真实分时走势图")
+        self.silver_board.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
+        self.silver_board.linkActivated.connect(self.on_symbol_clicked)
         self.silver_board.setStyleSheet("QLabel { background-color: %s; border-radius: 6px; padding: 1px 2px; margin-top: -2px; margin-bottom: -2px; border: 1px solid rgba(255,255,255,0.06); }" % self.current_card_bg)
         self.update_silver_board_ui()
         c_layout.addWidget(self.silver_board)
@@ -1716,7 +2508,7 @@ class ClockWindow(QWidget):
 
         self.macro_board = QLabel()
         self.macro_board.setAlignment(Qt.AlignCenter)
-        self.macro_board.setStyleSheet("QLabel { background-color: #141820; border-radius: 6px; padding: 0px 2px; margin: -10px 0px; border: 1px solid rgba(255,255,255,0.06); }"); self.macro_board.setFixedHeight(54)
+        self.macro_board.setStyleSheet("QLabel { background-color: #141820; border-radius: 6px; padding: 0px 2px; margin: -10px 0px; border: 1px solid rgba(255,255,255,0.06); }"); self.macro_board.setFixedHeight(66)
         c_layout.addWidget(self.macro_board)
 
         self.apply_theme(self.current_bg_color, self.current_time_color, self.current_card_bg, self.current_accent)
@@ -1726,7 +2518,7 @@ class ClockWindow(QWidget):
         self.timer.start(1000)
         self.update_clock()
 
-        self.resize(340, 620)
+        self.resize(340, 632)
 
     def init_workers(self):
         self.ag_thread = QThread()
@@ -1771,6 +2563,13 @@ class ClockWindow(QWidget):
         self.slv_worker.data_fetched.connect(self.on_slv_data_updated)
         self.slv_thread.start()
 
+        self.macro_thread = QThread()
+        self.macro_worker = MacroDataWorker()
+        self.macro_worker.moveToThread(self.macro_thread)
+        self.macro_thread.started.connect(self.macro_worker.do_work)
+        self.macro_worker.results_fetched.connect(self.on_macro_results_updated)
+        self.macro_thread.start()
+
     def update_compact_pnl(self):
         try:
             p_data = getattr(self, 'saved_calc_params', {"comm_idx": 0, "dir_idx": 1, "open_price": 12335.0, "lots": 1, "comm_rate": 0.0090})
@@ -1779,7 +2578,7 @@ class ClockWindow(QWidget):
             mult = 15.0 if comm_idx == 0 else 1000.0
             mult_unit = "千克/手" if comm_idx == 0 else "克/手"
 
-            curr_p = safe_float(self.silver_data.get('price', 12666.0), 12666.0) if comm_type == "沪银" else safe_float(self.gold_data.get('price', 885.48), 885.48)
+            curr_p = safe_float(self.silver_data.get('price', 12341.0), 12341.0) if comm_type == "沪银" else safe_float(self.gold_data.get('price', 852.50), 852.50)
 
             open_p = p_data.get("open_price", 12335.0)
             lots = p_data.get("lots", 1)
@@ -1791,6 +2590,7 @@ class ClockWindow(QWidget):
 
             alert_str = "预警平仓价: 暂无活跃预警"
             try:
+                found_active = False
                 alert_filepath = os.path.join(CONFIG_DIR, "price_alerts.json")
                 if os.path.exists(alert_filepath):
                     with open(alert_filepath, "r", encoding="utf-8") as af:
@@ -1806,30 +2606,43 @@ class ClockWindow(QWidget):
                                         alert_str = "预警平仓价: 涨到 " + f"{t_val:.1f}" + "自动平仓"
                                     else:
                                         alert_str = "预警平仓价: 跌到 " + f"{t_val:.1f}" + "自动平仓"
+                                    found_active = True
+                                    if comm_type in getattr(self, 'closed_alerts_info', {}):
+                                        del self.closed_alerts_info[comm_type]
                                     break
+                if not found_active and comm_type in getattr(self, 'closed_alerts_info', {}):
+                    closed_t = self.closed_alerts_info[comm_type]
+                    alert_str = f"预警平仓价: 已平仓 (目标 {closed_t:.1f})"
             except Exception:
                 pass
 
             curr_price_str = "当前%s实时价: %.1f" % (comm_type, curr_p)
+            is_empty = p_data.get("is_empty", False)
 
-            diff = (curr_p - open_p) if is_long else (open_p - curr_p)
-            gross_pnl = diff * mult * lots
-
-            single_rate = p_data.get("comm_rate", 0.0090) / 100.0
-            round_rate = single_rate * 2.0
-
-            open_turnover = open_p * mult * lots
-            total_commission = open_turnover * single_rate * 2.0
-            net_pnl = gross_pnl - total_commission
-
-            comm_str = "来回佣金扣除: -%.1f 元 (双边费率: %.3f%%)" % (total_commission, round_rate*100)
-
-            if net_pnl >= 0:
-                pnl_color = "#ef4444"
-                pnl_str = f"净浮盈: +{net_pnl:,.1f} 元"
+            if is_empty:
+                pnl_color = "#94a3b8"
+                pnl_str = "持仓状态: 空仓观望"
+                open_str = "当前无持仓 (0手)"
+                comm_str = "点击顶部 🧮 可随时重新录入持仓"
             else:
-                pnl_color = "#22c55e"
-                pnl_str = f"净浮亏: {net_pnl:,.1f} 元"
+                diff = (curr_p - open_p) if is_long else (open_p - curr_p)
+                gross_pnl = diff * mult * lots
+
+                single_rate = p_data.get("comm_rate", 0.0090) / 100.0
+                round_rate = single_rate * 2.0
+
+                open_turnover = open_p * mult * lots
+                total_commission = open_turnover * single_rate * 2.0
+                net_pnl = gross_pnl - total_commission
+
+                comm_str = "来回佣金扣除: -%.1f 元 (双边费率: %.3f%%)" % (total_commission, round_rate*100)
+
+                if net_pnl >= 0:
+                    pnl_color = "#ef4444"
+                    pnl_str = f"净浮盈: +{net_pnl:,.1f} 元"
+                else:
+                    pnl_color = "#22c55e"
+                    pnl_str = f"净浮亏: {net_pnl:,.1f} 元"
 
             if hasattr(self, 'compact_pnl_board'):
                 html = (
@@ -1879,6 +2692,26 @@ class ClockWindow(QWidget):
         self.update_silver_board_ui()
         self.check_price_alerts(info)
 
+    def _async_sync_alerts_to_cloud(self, filepath):
+        import threading
+        def _worker():
+            try:
+                repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+                if not os.path.exists(os.path.join(repo_dir, ".git")):
+                    repo_dir = os.getcwd()
+                git_dir = os.path.join(repo_dir, ".git")
+                if os.path.exists(git_dir):
+                    repo_json_path = os.path.join(repo_dir, "price_alerts.json")
+                    if os.path.abspath(filepath) != os.path.abspath(repo_json_path):
+                        shutil.copy(filepath, repo_json_path)
+                    subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True, timeout=10)
+                    subprocess.run(["git", "commit", "-m", "auto remove closed alert and sync to cloud"], cwd=repo_dir, capture_output=True, text=True, timeout=10)
+                    subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True, timeout=30)
+            except Exception as sync_err:
+                log_error(sync_err, "AutoCloudSyncOnClose")
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
     def check_price_alerts(self, info):
         try:
             current_price = safe_float(info.get("price", 0))
@@ -1892,11 +2725,12 @@ class ClockWindow(QWidget):
                 alerts = json.load(f)
             
             updated = False
+            remaining_alerts = []
             for alert in alerts:
                 if alert.get("active", True):
                     target = safe_float(alert.get("target", 0))
                     cond_type = alert.get("type")
-                    alert_contract = alert.get("contract")
+                    alert_contract = alert.get("contract", "")
                     
                     if alert_contract in current_contract or current_contract in alert_contract:
                         triggered = False
@@ -1906,8 +2740,11 @@ class ClockWindow(QWidget):
                             triggered = True
                         
                         if triggered:
-                            alert["active"] = False
                             updated = True
+                            if "AG" in alert_contract.upper() or "银" in alert_contract:
+                                self.closed_alerts_info["沪银"] = target
+                            elif "AU" in alert_contract.upper() or "金" in alert_contract:
+                                self.closed_alerts_info["沪金"] = target
                             try:
                                 import time
                                 for _ in range(3):
@@ -1928,32 +2765,37 @@ class ClockWindow(QWidget):
                                 
                                 if server_key:
                                     url = "https://sctapi.ftqq.com/%s.send" % server_key
-                                    title = "【价格预警达成】%s" % alert_contract
+                                    title = "【已平仓提醒】%s" % alert_contract
                                     direction_txt = "涨至 / 突破 (>= %.1f)" % target if cond_type == "up" else "跌至 / 跌破 (<= %.1f)" % target
                                     desp = (
-                                        "### 设定的目标价格已触发！\n"
+                                        "### 设定的平仓目标价格已达成（已平仓）！\n"
                                         "- 监控标的：%s\n"
-                                        "- 预警条件：%s\n"
+                                        "- 平仓条件：%s\n"
                                         "- 当前最新价：**%.1f**\n"
-                                        "- 触发时间：%s\n"
+                                        "- 平仓时间：%s\n"
+                                        "- 预警处理：已自动从预警列表删除并同步至云端\n"
                                     ) % (alert_contract, direction_txt, current_price, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                                     requests.post(url, data={"title": title, "desp": desp}, timeout=5)
                             except Exception as wx_err:
                                 log_error(wx_err, "AlertWeChatPush")
+                            continue
+                remaining_alerts.append(alert)
 
             if updated:
                 with open(filepath, "w", encoding="utf-8") as f:
-                    json.dump(alerts, f, ensure_ascii=False, indent=2)
+                    json.dump(remaining_alerts, f, ensure_ascii=False, indent=2)
+                self.update_compact_pnl()
+                self._async_sync_alerts_to_cloud(filepath)
         except Exception as e:
             log_error(e, "CheckPriceAlerts")
 
     def update_silver_board_ui(self):
         d_ag = self.silver_data
         d_au = self.gold_data
-        d_xau = getattr(self, 'xau_data', {"price": "4105.58", "change_pct": "+0.89%"})
-        d_xag = getattr(self, 'xag_data', {"price": "52.660", "change_pct": "+1.48%"})
-        d_iau = getattr(self, 'iau_data', {"price": "76.140", "change_pct": "-2.11%"})
-        d_slv = getattr(self, 'slv_data', {"price": "46.835", "change_pct": "-2.71%"})
+        d_xau = getattr(self, 'xau_data', {"price": "3958.38", "change_pct": "-0.74%"})
+        d_xag = getattr(self, 'xag_data', {"price": "51.460", "change_pct": "-0.37%"})
+        d_iau = getattr(self, 'iau_data', {"price": "74.870", "change_pct": "-0.72%"})
+        d_slv = getattr(self, 'slv_data', {"price": "46.650", "change_pct": "-0.39%"})
         
         ag_chg = safe_float(d_ag.get('change', 0))
         au_chg = safe_float(d_au.get('change', 0))
@@ -1969,48 +2811,65 @@ class ClockWindow(QWidget):
         iau_color = "#ef4444" if iau_chg >= 0 else "#22c55e"
         slv_color = "#ef4444" if slv_chg >= 0 else "#22c55e"
 
+        def _make_row(sym_key, label_txt, price_txt, pct_color, pct_txt, has_top_border=True):
+            b_style = "border-top: 1px solid rgba(255,255,255,0.06);" if has_top_border else ""
+            a_w = f'style="color: #ffffff; text-decoration: none;" href="quote:{sym_key}"'
+            a_c = f'style="color: {pct_color}; text-decoration: none;" href="quote:{sym_key}"'
+            return (
+                f'<tr>'
+                f'<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; {b_style}"><a {a_w}>{label_txt}</a></td>'
+                f'<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; {b_style}"><a {a_w}>{price_txt}</a></td>'
+                f'<td align="right" style="font-size: 13px; font-weight: bold; color: {pct_color}; padding: 1px 4px; {b_style}"><a {a_c}>{pct_txt}</a></td>'
+                f'</tr>'
+            )
+
+        rows = (
+            _make_row("AG", f"沪银主力 ({self.ag_contract})", str(d_ag.get("price", "12341.0")), ag_color, str(d_ag.get("change_pct", "+0.38%")), False) +
+            _make_row("AU", f"沪金主力 ({self.au_contract})", str(d_au.get("price", "852.5")), au_color, str(d_au.get("change_pct", "+0.53%")), True) +
+            _make_row("XAU", "伦敦金 (XAUUSD)", str(d_xau.get("price", "3958.38")), xau_color, str(d_xau.get("change_pct", "-0.74%")), True) +
+            _make_row("XAG", "伦敦银现 (AGUSDO)", str(d_xag.get("price", "51.460")), xag_color, str(d_xag.get("change_pct", "-0.37%")), True) +
+            _make_row("IAU", "IAU (LBMA黄金价格ETF)", str(d_iau.get("price", "74.870")), iau_color, str(d_iau.get("change_pct", "-0.72%")), True) +
+            _make_row("SLV", "SLV (LBMA白银现货ETF)", str(d_slv.get("price", "46.650")), slv_color, str(d_slv.get("change_pct", "-0.39%")), True)
+        )
+
         html_text = (
             '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 8px; padding: 1px 2px; line-height: 0.95;">'
-            '<tr>'
-            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px;">沪银主力 (%s)</td>'
-            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px;">%s</td>'
-            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px;">%s</td>'
-            '</tr>'
-            '<tr>'
-            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">沪金主力 (%s)</td>'
-            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '</tr>'
-            '<tr>'
-            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">伦敦金 (XAUUSD)</td>'
-            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '</tr>'
-            '<tr>'
-            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">伦敦银现 (AGUSDO)</td>'
-            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '</tr>'
-            '<tr>'
-            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">IAU (LBMA黄金价格ETF)</td>'
-            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '</tr>'
-            '<tr>'
-            '<td style="font-size: 13px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">SLV (LBMA白银现货ETF)</td>'
-            '<td align="center" style="font-size: 15px; font-weight: bold; color: #ffffff; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '<td align="right" style="font-size: 13px; font-weight: bold; color: %s; padding: 1px 4px; border-top: 1px solid rgba(255,255,255,0.06);">%s</td>'
-            '</tr>'
+            f'{rows}'
             '</table>'
-        ) % (
-            str(self.ag_contract), str(d_ag.get("price", "12687.0")), str(ag_color), str(d_ag.get("change_pct", "+0.61%%")),
-            str(self.au_contract), str(d_au.get("price", "885.5")), str(au_color), str(d_au.get("change_pct", "+0.97%%")),
-            str(d_xau.get("price", "4105.58")), str(xau_color), str(d_xau.get("change_pct", "+0.89%%")),
-            str(d_xag.get("price", "52.660")), str(xag_color), str(d_xag.get("change_pct", "+1.48%%")),
-            str(d_iau.get("price", "76.140")), str(iau_color), str(d_iau.get("change_pct", "-2.11%%")),
-            str(d_slv.get("price", "46.835")), str(slv_color), str(d_slv.get("change_pct", "-2.71%%"))
         )
         self.silver_board.setText(html_text)
+
+    def on_symbol_clicked(self, link):
+        if not link.startswith("quote:"):
+            return
+        sym_key = link.split(":", 1)[1].strip().upper()
+        mapping = {
+            "AG": ("沪银主力", self.ag_contract, self.silver_data),
+            "AU": ("沪金主力", self.au_contract, self.gold_data),
+            "XAU": ("伦敦金 (XAUUSD)", "XAUUSD", self.xau_data),
+            "XAG": ("伦敦银现 (AGUSDO)", "AGUSDO", self.xag_data),
+            "IAU": ("IAU (LBMA黄金价格ETF)", "IAU", self.iau_data),
+            "SLV": ("SLV (LBMA白银现货ETF)", "SLV", self.slv_data),
+        }
+        if sym_key not in mapping:
+            return
+        disp_name, c_code, q_data = mapping[sym_key]
+        if hasattr(self, "active_chart_dlg") and self.active_chart_dlg is not None:
+            try:
+                self.active_chart_dlg.close()
+            except Exception:
+                pass
+        self.active_chart_dlg = IntradayChartDialog(sym_key, disp_name, c_code, q_data, self)
+        geo = self.geometry()
+        screen = self.screen().availableGeometry() if hasattr(self, 'screen') else QApplication.desktop().screenGeometry(self)
+        popup_w = self.active_chart_dlg.width()
+        if geo.x() - popup_w - 8 >= screen.left():
+            px = geo.x() - popup_w - 8
+        else:
+            px = min(screen.right() - popup_w, geo.right() + 8)
+        py = max(screen.top(), min(screen.bottom() - self.active_chart_dlg.height(), geo.y() + 120))
+        self.active_chart_dlg.move(px, py)
+        self.active_chart_dlg.show()
 
     def init_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -2073,10 +2932,10 @@ class ClockWindow(QWidget):
         self.is_forced_exit = True
         self.save_settings()
         
-        for worker in [getattr(self, 'ag_worker', None), getattr(self, 'au_worker', None), getattr(self, 'xau_worker', None), getattr(self, 'xag_worker', None), getattr(self, 'iau_worker', None), getattr(self, 'slv_worker', None)]:
+        for worker in [getattr(self, 'ag_worker', None), getattr(self, 'au_worker', None), getattr(self, 'xau_worker', None), getattr(self, 'xag_worker', None), getattr(self, 'iau_worker', None), getattr(self, 'slv_worker', None), getattr(self, 'macro_worker', None)]:
             if worker:
                 worker.stop()
-        for thread in [getattr(self, 'ag_thread', None), getattr(self, 'au_thread', None), getattr(self, 'xau_thread', None), getattr(self, 'xag_thread', None), getattr(self, 'iau_thread', None), getattr(self, 'slv_thread', None)]:
+        for thread in [getattr(self, 'ag_thread', None), getattr(self, 'au_thread', None), getattr(self, 'xau_thread', None), getattr(self, 'xag_thread', None), getattr(self, 'iau_thread', None), getattr(self, 'slv_thread', None), getattr(self, 'macro_thread', None)]:
             if thread:
                 thread.quit()
                 thread.wait(1000)
@@ -2096,7 +2955,6 @@ class ClockWindow(QWidget):
         self.time_holiday_card.setStyleSheet("QWidget { background-color: transparent; border: none; }")
         self.silver_board.setStyleSheet("QLabel { background-color: %s; border-radius: 8px; padding: 4px; border: 1px solid rgba(255,255,255,0.06); }" % card_bg)
         self.status_card.setStyleSheet("QWidget { background-color: %s; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); }" % card_bg)
-        
 
     def toggle_dock(self):
         screen = self.screen().availableGeometry() if hasattr(self, 'screen') else QApplication.desktop().screenGeometry(self)
@@ -2111,7 +2969,7 @@ class ClockWindow(QWidget):
             if not self.normal_geometry.isNull():
                 self.setGeometry(self.normal_geometry)
             else:
-                self.resize(340, 620)
+                self.resize(340, 632)
             self.is_docked = False
             self.dock_btn.setText("◀")
         self.save_settings()
@@ -2291,36 +3149,58 @@ class ClockWindow(QWidget):
         
         ag_cd_str = f" ({ag_countdown})" if ag_countdown else ""
         a_cd_str = f" ({a_countdown})" if a_countdown else ""
-        self.stock_status_label.setText(f"{a_status}  <span style='color: #ffffff; font-size: 11px;'>{a_cd_str}</span>")
-        self.silver_status_label.setText(f"{ag_status}  <span style='color: #ffffff; font-size: 11px;'>{ag_cd_str}</span>")
+        self.stock_status_label.setText(f"{a_status}  <span style=\'color: #ffffff; font-size: 11px;\'>{a_cd_str}</span>")
+        self.silver_status_label.setText(f"{ag_status}  <span style=\'color: #ffffff; font-size: 11px;\'>{ag_cd_str}</span>")
+
+    def on_macro_results_updated(self, results):
+        self.macro_results.update(results)
+        self.update_macro_countdown(datetime.datetime.now())
 
     def update_macro_countdown(self, now):
         upcoming = []
         macro_list = get_dynamic_macro_events()
         for ev in macro_list:
             diff = ev["time"] - now
-            if diff.total_seconds() > 0:
+            if diff.total_seconds() > -7200:
                 upcoming.append((ev, diff))
         
-        upcoming.sort(key=lambda x: x[1])
+        upcoming.sort(key=lambda x: (0 if x[1].total_seconds() <= 0 else 1, abs(x[1].total_seconds())))
         upcoming = upcoming[:3]
 
         if upcoming:
             rows_html = ""
             for ev, diff in upcoming:
                 total_sec = int(diff.total_seconds())
-                days = total_sec // 86400
-                hours = (total_sec % 86400) // 3600
-                mins = (total_sec % 3600) // 60
+                ev_name = ev["name"]
+                res_str = self.macro_results.get(ev_name, "")
                 
-                if days > 0:
-                    time_str = "%d天 %02d时%02d分" % (days, hours, mins)
+                if total_sec <= 0:
+                    if res_str:
+                        right_html = '<span style="color: #facc15;">%s</span>' % res_str
+                    else:
+                        right_html = '<span style="color: #38bdf8;">已到点，正在极速抓取消息...</span>'
                 else:
-                    time_str = "%02d时%02d分" % (hours, mins)
+                    days = total_sec // 86400
+                    hours = (total_sec % 86400) // 3600
+                    mins = (total_sec % 3600) // 60
+                    secs = total_sec % 60
+                    
+                    if days > 0:
+                        time_str = "%d天 %02d时%02d分" % (days, hours, mins)
+                    elif hours > 0:
+                        time_str = "%02d时%02d分%02d秒" % (hours, mins, secs)
+                    else:
+                        time_str = "<span style=\'color: #f87171;\'>%02d分%02d秒</span>" % (mins, secs)
+                    right_html = time_str
                 
-                rows_html += '<tr><td style="font-size: 11px; color: #ffffff; font-weight: bold; padding: 0px 3px; margin: 0px;">%s</td><td align="right" style="font-size: 11px; font-weight: bold; color: #ffffff; padding: 0px 3px; margin: 0px;">%s</td></tr>' % (ev["name"], time_str)
+                rows_html += (
+                    '<tr>'
+                    '<td style="font-size: 11px; color: #ffffff; font-weight: bold; padding: 1px 3px; margin: 0px;">%s</td>'
+                    '<td align="right" style="font-size: 11px; font-weight: bold; color: #ffffff; padding: 1px 3px; margin: 0px;">%s</td>'
+                    '</tr>'
+                ) % (ev_name, right_html)
 
-            html_text = '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 6px; padding: 0px 2px; line-height: 0.75;">%s</table>' % rows_html
+            html_text = '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, monospace; background-color: #141820; border-radius: 6px; padding: 1px 2px; line-height: 0.9;">%s</table>' % rows_html
             self.macro_board.setText(html_text)
         else:
             self.macro_board.setText("宏观事件：暂无近期安排")

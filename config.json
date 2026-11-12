@@ -3,11 +3,12 @@
   "opacity": 0.9490196078431372,
   "ontop": true,
   "locked": false,
-  "pos_x": 1562,
-  "pos_y": 476,
+  "pos_x": 1477,
+  "pos_y": 378,
   "calc_comm_idx": 0,
   "calc_dir_idx": 1,
   "calc_open_price": 12339.0,
   "calc_lots": 2,
-  "calc_comm_rate": 0.003
+  "calc_comm_rate": 0.003,
+  "calc_is_empty": true
 }
