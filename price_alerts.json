@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "contract": "AG0",
+    "type": "up",
+    "target": 12150.0,
+    "active": true,
+    "time": "2026-11-13 16:30:36"
+  }
+]
