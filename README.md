@@ -42,3 +42,9 @@ pyinstaller --clean --noconsole --onefile --name="MarketClock" create.py
 └── LICENSE               # 开源许可证
 📜 License
 本项目采用 MIT License 开源协议。
+<img width="356" height="671" alt="image" src="https://github.com/user-attachments/assets/f24cc9b4-7c6e-4433-8a7f-7c88f5d8a674" />
+<img width="376" height="444" alt="image" src="https://github.com/user-attachments/assets/69ac5659-11a3-4bd3-8e07-8d33acc0c6d9" />
+<img width="483" height="354" alt="image" src="https://github.com/user-attachments/assets/9bfa726a-83fa-4f34-9a00-0712bfc48d8d" />
+<img width="364" height="405" alt="image" src="https://github.com/user-attachments/assets/f81e30da-df50-4e19-9adf-ed1de9357dfb" />
+<img width="436" height="547" alt="image" src="https://github.com/user-attachments/assets/25b2a7f6-67df-42ba-ac3f-fceb7f4220a3" />
+
