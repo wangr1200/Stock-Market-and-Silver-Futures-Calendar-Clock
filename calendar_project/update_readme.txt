@@ -1,0 +1,1 @@
+已成功将 Git 同步逻辑统一至 sync_alerts.py 中的 sync_to_cloud() 函数，create.py 中已直接调用该统一接口。

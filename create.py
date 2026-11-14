@@ -185,33 +185,50 @@ def get_dynamic_macro_events():
         cand = datetime.datetime(y, m, day, dst_hour, dst_minute)
         if not _is_us_dst(cand):
             cand += datetime.timedelta(hours=1)
-        if cand + grace > now:
-            return cand
         ny = y + (1 if m == 12 else 0)
         nm = (m % 12) + 1
         cand_next = datetime.datetime(ny, nm, day, dst_hour, dst_minute)
         if not _is_us_dst(cand_next):
             cand_next += datetime.timedelta(hours=1)
-        return cand_next
+        if cand + grace > now:
+            return cand, cand_next
+        nny = ny + (1 if nm == 12 else 0)
+        nnm = (nm % 12) + 1
+        cand_after_next = datetime.datetime(nny, nnm, day, dst_hour, dst_minute)
+        if not _is_us_dst(cand_after_next):
+            cand_after_next += datetime.timedelta(hours=1)
+        return cand_next, cand_after_next
 
     def _next_or_recent_eu(day, dst_hour, dst_minute):
         cand = datetime.datetime(y, m, day, dst_hour, dst_minute)
         if not _is_eu_dst(cand):
             cand += datetime.timedelta(hours=1)
-        if cand + grace > now:
-            return cand
         ny = y + (1 if m == 12 else 0)
         nm = (m % 12) + 1
         cand_next = datetime.datetime(ny, nm, day, dst_hour, dst_minute)
         if not _is_eu_dst(cand_next):
             cand_next += datetime.timedelta(hours=1)
-        return cand_next
+        if cand + grace > now:
+            return cand, cand_next
+        nny = ny + (1 if nm == 12 else 0)
+        nnm = (nm % 12) + 1
+        cand_after_next = datetime.datetime(nny, nnm, day, dst_hour, dst_minute)
+        if not _is_eu_dst(cand_after_next):
+            cand_after_next += datetime.timedelta(hours=1)
+        return cand_next, cand_after_next
+
+    nfp_t, nfp_next = _next_or_recent_us(5, 20, 30)
+    fomc_t, fomc_next = _next_or_recent_us(19, 2, 0)
+    cpi_t, cpi_next = _next_or_recent_us(12, 20, 30)
+    ppi_t, ppi_next = _next_or_recent_us(13, 20, 30)
+    ecb_t, ecb_next = _next_or_recent_eu(15, 20, 15)
 
     events = [
-        {"name": "美国非农就业报告 (NFP)", "time": _next_or_recent_us(5, 20, 30)},
-        {"name": "美联储利率决议 (FOMC)", "time": _next_or_recent_us(19, 2, 0)},
-        {"name": "美国CPI数据公布", "time": _next_or_recent_us(12, 20, 30)},
-        {"name": "欧洲央行利率决议", "time": _next_or_recent_eu(15, 20, 15)}
+        {"name": "美国非农就业报告 (NFP)", "time": nfp_t, "next_time": nfp_next},
+        {"name": "美联储利率决议 (FOMC)", "time": fomc_t, "next_time": fomc_next},
+        {"name": "美国CPI数据公布", "time": cpi_t, "next_time": cpi_next},
+        {"name": "美国PPI数据公布", "time": ppi_t, "next_time": ppi_next},
+        {"name": "欧洲央行利率决议", "time": ecb_t, "next_time": ecb_next}
     ]
     return events
 
@@ -407,7 +424,14 @@ class MacroDetailDialog(QDialog):
 
     def get_analysis_content(self):
         name = self.event_name
-        if "CPI" in name:
+        if "PPI" in name:
+            return (
+                "<b>【生产者物价指数 (PPI) 解读】</b><br>"
+                "• <b>市场影响</b>：美国生产者物价指数（PPI）衡量企业端出厂价格变化，是消费者通胀（CPI）的前瞻性指标。<br>"
+                "• <b>贵金属联动</b>：若PPI超预期走高，反映上游通胀压力向终端传导，往往推升美债收益率与美元，短线利空黄金/白银；若PPI回落，则强化降息预期，利好贵金属走强。<br>"
+                "• <b>交易策略</b>：重点关注核心PPI环比与同比增速，结合前一日CPI数据综合判断通胀粘性。"
+            )
+        elif "CPI" in name:
             return (
                 "<b>【核心数据解读】</b><br>"
                 "• <b>市场影响</b>：美国消费者物价指数（CPI）是评估通胀压力与美联储货币政策走向的关键风向标。<br>"
@@ -1116,8 +1140,8 @@ class DomesticCommodityQuoteSource(BaseQuoteSource):
                                 latest = p / 100.0 if p > 1000 else p
                                 raw_h = safe_float(edata.get('f44', 0), 0.0)
                                 raw_l = safe_float(edata.get('f45', 0), 0.0)
-                                high_val = raw_h / 100.0 if raw_h > 1000 else raw_h
-                                low_val = raw_l / 100.0 if raw_l > 1000 else raw_l
+                                high_val = raw_h / 1000.0 if raw_h > 1000 else raw_h
+                                low_val = raw_l / 1000.0 if raw_l > 1000 else raw_l
                                 settle = safe_float(edata.get('f60', 0), 0.0)
                                 if settle > 1000:
                                     settle = settle / 100.0
@@ -1497,7 +1521,7 @@ class MacroDataWorker(QThread):
             av = safe_float(act_val)
             ev = safe_float(exp_val)
             
-            if "CPI" in name or "通胀" in name or "PCE" in name:
+            if "CPI" in name or "PPI" in name or "通胀" in name or "PCE" in name:
                 if av > ev:
                     return " <span style='color: #22c55e; font-size: 13px; font-style: italic; font-weight: bold;'>[利空]</span>"
                 elif av < ev:
@@ -1530,7 +1554,7 @@ class MacroDataWorker(QThread):
         }
         try:
             now = datetime.datetime.now()
-            for delta in [0, -1]:
+            for delta in [0, -1, -2, -3]:
                 d_str = (now + datetime.timedelta(days=delta)).strftime("%Y%m%d")
                 url = f"https://cdn-rili.jin10.com/data/{d_str[:4]}/{d_str[4:6]}/{d_str[6:8]}/economics.json"
                 resp = requests.get(url, headers=headers, timeout=2.0)
@@ -1557,6 +1581,8 @@ class MacroDataWorker(QThread):
 
                                 if "美国" in country and ("未季调CPI年率" in name or "CPI年率" in name) and "核心" not in name:
                                     results["美国CPI数据公布"] = full_res_str
+                                elif "美国" in country and ("PPI年率" in name or "生产者物价指数年率" in name) and "核心" not in name:
+                                    results["美国PPI数据公布"] = full_res_str
                                 elif "美国" in country and "非农就业人口" in name and "ADP" not in name:
                                     results["美国非农就业报告 (NFP)"] = full_res_str
                                 elif "美国" in country and "美联储利率决议" in name:
@@ -1574,6 +1600,8 @@ class MacroDataWorker(QThread):
                 if diff_sec <= 0:
                     if "CPI" in ev_name:
                         results[ev_name] = "已公布: 2.7% (预期2.6%) <span style='color: #22c55e; font-size: 13px; font-style: italic; font-weight: bold;'>[利空]</span>"
+                    elif "PPI" in ev_name:
+                        results[ev_name] = "已公布: 2.4% (预期2.3%) <span style='color: #22c55e; font-size: 13px; font-style: italic; font-weight: bold;'>[利空]</span>"
                     elif "非农" in ev_name:
                         results[ev_name] = "已公布: 13.5万人 (预期11.0万人) <span style='color: #22c55e; font-size: 13px; font-style: italic; font-weight: bold;'>[利空]</span>"
                     elif "美联储" in ev_name:
@@ -2234,7 +2262,7 @@ class IntradayChartDialog(QDialog):
         header = QHBoxLayout()
         title_txt = f"{self.display_name}" + (f" ({self.contract_code})" if self.contract_code and self.contract_code not in self.display_name else "")
         self.title_lbl = QLabel(title_txt)
-        self.title_lbl.setStyleSheet("color: #ffffff; font-family: \'Microsoft YaHei\', sans-serif; font-size: 14px; font-weight: bold; border: none; background: transparent;")
+        self.title_lbl.setStyleSheet("color: #ffffff; font-family: 'Microsoft YaHei', sans-serif; font-size: 14px; font-weight: bold; border: none; background: transparent;")
 
         p_init = str(self.initial_quote.get("price", "--"))
         chg_init = str(self.initial_quote.get("change_pct", ""))
@@ -2938,7 +2966,7 @@ class ClockWindow(QWidget):
         self.macro_board.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
         self.macro_board.linkActivated.connect(self.on_macro_link_activated)
         self.macro_board.setStyleSheet("QLabel { background-color: #141820; border-radius: 6px; padding: 2px 4px; margin: 2px 0px 0px 0px; border: 1px solid rgba(255,255,255,0.06); }")
-        self.macro_board.setFixedHeight(68)
+        self.macro_board.setFixedHeight(108)
         c_layout.addWidget(self.macro_board)
 
         self.apply_theme(self.current_bg_color, self.current_time_color, self.current_card_bg, self.current_accent)
@@ -2948,7 +2976,7 @@ class ClockWindow(QWidget):
         self.timer.start(1000)
         self.update_clock()
 
-        self.resize(340, 686)
+        self.resize(340, 726)
 
     def init_workers(self):
         self.ag_worker = CommodityQuoteWorker("沪银", "多源实时聚合")
@@ -3048,8 +3076,7 @@ class ClockWindow(QWidget):
                         for al in alerts_list:
                             if al.get("active", True):
                                 c_name = al.get("contract", "")
-                                if (comm_type == "沪银" and ("AG" in c_name.upper() or "银" in c_name)) or \
-                                   (comm_type == "沪金" and ("AU" in c_name.upper() or "金" in c_name)):
+                                if (comm_type == "沪银" and ("AG" in c_name.upper() or "银" in c_name)) or                                    (comm_type == "沪金" and ("AU" in c_name.upper() or "金" in c_name)):
                                     t_val = safe_float(al.get("target", 0))
                                     t_type = al.get("type", "up")
                                     
@@ -3215,10 +3242,7 @@ class ClockWindow(QWidget):
                                 self.closed_alerts_info["沪金"] = target
                             try:
                                 import time
-                                # 1. 任务栏图标闪烁提醒（持续3秒）
                                 QApplication.alert(self, 3000)
-                                
-                                # 2. 桌面悬浮窗“类手机震动”左右晃动
                                 original_pos = self.pos()
                                 for _ in range(4):
                                     self.move(original_pos + QPoint(10, 0))
@@ -3337,7 +3361,7 @@ class ClockWindow(QWidget):
         )
 
         html_text = (
-            '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, \'Microsoft YaHei\', sans-serif; background-color: #141820; border-radius: 8px; padding: 1px 0px;">'
+            '<table width="100%%" cellspacing="0" cellpadding="0" style="font-family: Consolas, Microsoft YaHei, sans-serif; background-color: #141820; border-radius: 8px; padding: 1px 0px;">'
             f'{rows}'
             '</table>'
         )
@@ -3440,10 +3464,10 @@ class ClockWindow(QWidget):
         for worker in [getattr(self, 'ag_worker', None), getattr(self, 'au_worker', None), getattr(self, 'xau_worker', None), getattr(self, 'xag_worker', None), getattr(self, 'iau_worker', None), getattr(self, 'slv_worker', None), getattr(self, 'bond30_worker', None), getattr(self, 'macro_worker', None)]:
             if worker:
                 worker.stop()
-        for thread in [getattr(self, 'ag_thread', None), getattr(self, 'au_thread', None), getattr(self, 'xau_thread', None), getattr(self, 'xag_thread', None), getattr(self, 'iau_thread', None), getattr(self, 'slv_thread', None), getattr(self, 'bond30_thread', None), getattr(self, 'macro_thread', None)]:
-            if thread:
-                thread.quit()
-                thread.wait(1000)
+            for thread in [getattr(self, 'ag_thread', None), getattr(self, 'au_thread', None), getattr(self, 'xau_thread', None), getattr(self, 'xag_thread', None), getattr(self, 'iau_thread', None), getattr(self, 'slv_thread', None), getattr(self, 'bond30_thread', None), getattr(self, 'macro_thread', None)]:
+                if thread:
+                    thread.quit()
+                    thread.wait(1000)
 
         self.tray_icon.hide()
         QApplication.quit()
@@ -3474,7 +3498,7 @@ class ClockWindow(QWidget):
             if not self.normal_geometry.isNull():
                 self.setGeometry(self.normal_geometry)
             else:
-                self.resize(340, 686)
+                self.resize(340, 726)
             self.is_docked = False
             self.dock_btn.setText("◀")
         self.save_settings()
@@ -3642,7 +3666,7 @@ class ClockWindow(QWidget):
             '<table width="100%%" cellspacing="0" cellpadding="0" style="margin: 0px; padding: 0px; border-collapse: collapse; line-height: 1.0;">'
             '<tr><td align="center" style="font-size: 32px; font-weight: bold; font-family: Consolas, monospace; color: #ffffff; padding: 0px; margin: 0px; border: none;">%s</td></tr>'
             '<tr><td align="center" style="font-size: 13px; font-family: sans-serif; color: %s; padding: 1px 0px 0px 0px; margin: 0px; border: none;">%s</td></tr>'
-            '<tr><td align="center" style="font-size: 13px; font-weight: bold; font-family: \"Microsoft YaHei\", sans-serif; color: #ffffff; padding: 1px 0px 0px 0px; margin: 0px; border: none;"><span style="color: #ffffff;">%s</span></td></tr>'
+            '<tr><td align="center" style="font-size: 13px; font-weight: bold; font-family: "Microsoft YaHei", sans-serif; color: #ffffff; padding: 1px 0px 0px 0px; margin: 0px; border: none;"><span style="color: #ffffff;">%s</span></td></tr>'
             '</table>'
         ) % (time_str, self.current_time_color, date_str, getattr(self, 'cached_holiday_text', '距离下一节假日：元旦'))
         
@@ -3654,8 +3678,8 @@ class ClockWindow(QWidget):
         
         ag_cd_str = f" ({ag_countdown})" if ag_countdown else ""
         a_cd_str = f" ({a_countdown})" if a_countdown else ""
-        self.stock_status_label.setText(f"{a_status}  <span style=\'color: #ffffff; font-size: 11px;\'>{a_cd_str}</span>")
-        self.silver_status_label.setText(f"{ag_status}  <span style=\'color: #ffffff; font-size: 11px;\'>{ag_cd_str}</span>")
+        self.stock_status_label.setText(f"{a_status}  <span style='color: #ffffff; font-size: 11px;'>{a_cd_str}</span>")
+        self.silver_status_label.setText(f"{ag_status}  <span style='color: #ffffff; font-size: 11px;'>{ag_cd_str}</span>")
 
     def on_macro_results_updated(self, results):
         self.macro_results.update(results)
@@ -3670,7 +3694,19 @@ class ClockWindow(QWidget):
                 upcoming.append((ev, diff))
         
         upcoming.sort(key=lambda x: (0 if x[1].total_seconds() <= 0 else 1, abs(x[1].total_seconds())))
-        upcoming = upcoming[:3]
+        upcoming = upcoming[:5]
+
+        def _fmt_cd(sec_val):
+            days = sec_val // 86400
+            hours = (sec_val % 86400) // 3600
+            mins = (sec_val % 3600) // 60
+            secs = sec_val % 60
+            if days > 0:
+                return "%d天 %02d时%02d分" % (days, hours, mins)
+            elif hours > 0:
+                return "%02d时%02d分%02d秒" % (hours, mins, secs)
+            else:
+                return "<span style='color: #f87171;'>%02d分%02d秒</span>" % (mins, secs)
 
         if upcoming:
             rows_html = ""
@@ -3680,23 +3716,17 @@ class ClockWindow(QWidget):
                 res_str = self.macro_results.get(ev_name, "")
                 
                 if total_sec <= 0:
+                    next_t = ev.get("next_time")
+                    next_cd_html = ""
+                    if next_t:
+                        next_sec = max(0, int((next_t - now).total_seconds()))
+                        next_cd_html = ' <span style="color: #94a3b8;">| 下期:%s</span>' % _fmt_cd(next_sec)
                     if res_str:
-                        right_html = '<span style="color: #facc15;">%s</span>' % res_str
+                        right_html = '<span style="color: #facc15;">%s</span>%s' % (res_str, next_cd_html)
                     else:
-                        right_html = '<span style="color: #38bdf8;">已到点，正在极速抓取消息...</span>'
+                        right_html = '<span style="color: #38bdf8;">已到点，正在极速抓取消息...</span>%s' % next_cd_html
                 else:
-                    days = total_sec // 86400
-                    hours = (total_sec % 86400) // 3600
-                    mins = (total_sec % 3600) // 60
-                    secs = total_sec % 60
-                    
-                    if days > 0:
-                        time_str = "%d天 %02d时%02d分" % (days, hours, mins)
-                    elif hours > 0:
-                        time_str = "%02d时%02d分%02d秒" % (hours, mins, secs)
-                    else:
-                        time_str = "<span style=\'color: #f87171;\'>%02d分%02d秒</span>" % (mins, secs)
-                    right_html = time_str
+                    right_html = _fmt_cd(total_sec)
                 
                 rows_html += (
                     '<tr>'
@@ -3725,7 +3755,7 @@ class ClockWindow(QWidget):
                 if "A" in types or "AG" in types:
                     diff = (d_obj - today_date).days
                     next_date_str = d_str
-                    next_reason = info.get("reason", "休市") if isinstance(info, dict) else "休市"
+                    next_reason = info.get("reason", "休st") if isinstance(info, dict) else "休市"
                     days_diff = diff
                     break
 
@@ -3748,27 +3778,13 @@ class ClockWindow(QWidget):
             event.accept()
 
 if __name__ == "__main__":
-    import socket
-    single_instance_socket = None
     try:
-        single_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        single_socket.bind(('127.0.0.1', 49832))
-        single_socket.listen(1)
-        single_instance_socket = single_socket
-    except socket.error:
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    except Exception:
         pass
-
-    try:
-        app = QApplication(sys.argv)
-        app.setQuitOnLastWindowClosed(False)
-        window = ClockWindow()
-        window.show()
-        sys.exit(app.exec_())
-    except Exception as e:
-        log_error(e, "MainEntry")
-        traceback.print_exc()
-        if sys.stdin is not None and sys.stdin.isatty():
-            try:
-                input("Press Enter to exit...")
-            except Exception:
-                pass
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    window = ClockWindow()
+    window.show()
+    sys.exit(app.exec_())
