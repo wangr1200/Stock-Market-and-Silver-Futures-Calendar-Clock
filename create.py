@@ -753,7 +753,6 @@ class PriceAlertDialog(QDialog):
             with open(filepath, "r", encoding="utf-8") as f:
                 alerts = json.load(f)
 
-            # 1. 直接通过 GitHub REST API 更新云端 GitHub 仓库 (绕过本地 Git / push.bat)
             import base64
             GITHUB_TOKEN = "ghp_zZ5zkMZBqNoG0ryPkNNjvuaxbvTYX11Flz0"
             REPO = "wangr1200/Stock-Market-and-Silver-Futures-Calendar-Clock"
@@ -783,7 +782,6 @@ class PriceAlertDialog(QDialog):
             except Exception as api_err:
                 log_error(api_err, "GitHubAPISync")
 
-            # 2. 构造微信通知摘要
             alerts_summary = ""
             for idx, a in enumerate(alerts):
                 c_name = a.get("contract", "")
@@ -854,7 +852,6 @@ class PriceAlertDialog(QDialog):
             dlg = SilentTipDialog("同步失败", "推送或发送微信通知异常：\n%s" % e, self)
             dlg.exec_()
 
-
     def paintCell(self, painter, rect, date):
         super().paintCell(painter, rect, date)
         date_str = date.toString("yyyy-MM-dd")
@@ -886,6 +883,10 @@ class PriceAlertDialog(QDialog):
                     painter.drawEllipse(QRectF(x, y, dot_size, dot_size))
 
             painter.restore()
+
+
+class CustomCalendarWidget(QCalendarWidget):
+    pass
 
 
 class MarketCalendarDialog(QDialog):
@@ -3090,7 +3091,8 @@ class ClockWindow(QWidget):
                         for al in alerts_list:
                             if al.get("active", True):
                                 c_name = al.get("contract", "")
-                                if (comm_type == "沪银" and ("AG" in c_name.upper() or "银" in c_name)) or                                    (comm_type == "沪金" and ("AU" in c_name.upper() or "金" in c_name)):
+                                if (comm_type == "沪银" and ("AG" in c_name.upper() or "银" in c_name)) or \
+                                   (comm_type == "沪金" and ("AU" in c_name.upper() or "金" in c_name)):
                                     t_val = safe_float(al.get("target", 0))
                                     t_type = al.get("type", "up")
                                     
