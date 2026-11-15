@@ -3,6 +3,7 @@ import requests
 import os
 import json
 import sys
+import subprocess
 import akshare as ak
 
 # ================= 1. 配置区域 =================
@@ -28,8 +29,25 @@ CHECK_INTERVAL = 60  # 每 60 秒检查一次盘面
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".market_clock_cache")
 ALERTS_FILE = os.path.join(CACHE_DIR, "price_alerts.json")
 
+# 尝试自动寻找当前脚本所在的 Git 仓库路径下的 price_alerts.json，用于双向同步
+def get_repo_alerts_file():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # 向上寻找或直接在当前目录查找 price_alerts.json 或 .git
+    target = os.path.join(current_dir, "price_alerts.json")
+    if os.path.exists(target) or os.path.exists(os.path.join(current_dir, ".git")):
+        return target
+    # 递归向上找一级
+    parent_dir = os.path.dirname(current_dir)
+    target_parent = os.path.join(parent_dir, "price_alerts.json")
+    if os.path.exists(target_parent):
+        return target_parent
+    return None
+
+REPO_ALERTS_FILE = get_repo_alerts_file()
+
 
 def load_alerts():
+    # 优先从本地缓存加载
     if os.path.exists(ALERTS_FILE):
         try:
             with open(ALERTS_FILE, "r", encoding="utf-8") as f:
@@ -41,8 +59,28 @@ def load_alerts():
 def save_alerts(alerts):
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
+        # 1. 保存到用户缓存目录
         with open(ALERTS_FILE, "w", encoding="utf-8") as f:
             json.dump(alerts, f, ensure_ascii=False, indent=2)
+        
+        # 2. 如果找到了 Git 仓库中的 price_alerts.json，同步写入并自动执行 git 提交推送
+        if REPO_ALERTS_FILE:
+            with open(REPO_ALERTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(alerts, f, ensure_ascii=False, indent=2)
+            
+            # 自动执行 Git 同步到云端
+            repo_dir = os.path.dirname(REPO_ALERTS_FILE)
+            try:
+                subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True, check=True)
+                subprocess.run(["git", "commit", "-m", "auto update: price alerts changed"], cwd=repo_dir, capture_output=True, text=True)
+                push_res = subprocess.run(["git", "push"], cwd=repo_dir, capture_output=True, text=True)
+                if push_res.returncode == 0:
+                    print(f"[{time.strftime('%H:%M:%S')}] [自动同步] 预警变更已成功自动推送到云端 GitHub！")
+                else:
+                    print(f"[{time.strftime('%H:%M:%S')}] [自动同步警告] Git push 失败: {push_res.stderr.strip()}")
+            except Exception as git_e:
+                print(f"[{time.strftime('%H:%M:%S')}] [自动同步异常]: {git_e}")
+
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] 保存预警文件失败: {e}")
 
@@ -178,6 +216,6 @@ if __name__ == "__main__":
         check_market_data()
         print(f"[{time.strftime('%H:%M:%S')}] 云端单次任务执行完成，正常退出。")
     else:
-        while True:
+        while Time.sleep(CHECK_INTERVAL) if False else True:
             check_market_data()
             time.sleep(CHECK_INTERVAL)

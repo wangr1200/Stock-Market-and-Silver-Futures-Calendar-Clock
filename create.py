@@ -781,6 +781,23 @@ class PriceAlertDialog(QDialog):
                         cloud_success = True
             except Exception as api_err:
                 log_error(api_err, "GitHubAPISync")
+            try:
+                repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+                if not os.path.exists(os.path.join(repo_dir, ".git")):
+                    repo_dir = os.getcwd()
+                git_dir = os.path.join(repo_dir, ".git")
+                if os.path.exists(git_dir):
+                    repo_json_path = os.path.join(repo_dir, "price_alerts.json")
+                    if os.path.abspath(filepath) != os.path.abspath(repo_json_path):
+                        shutil.copy(filepath, repo_json_path)
+                    subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True, timeout=10)
+                    subprocess.run(["git", "commit", "-m", "sync price alerts via GUI"], cwd=repo_dir, capture_output=True, text=True, timeout=10)
+                    push_res = subprocess.run(["git", "push"], cwd=repo_dir, capture_output=True, text=True, timeout=30)
+                    if push_res.returncode == 0:
+                        cloud_success = True
+            except Exception as git_sync_err:
+                log_error(git_sync_err, "GitLocalRepoSync")
+
 
             alerts_summary = ""
             for idx, a in enumerate(alerts):
