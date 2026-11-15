@@ -19,5 +19,12 @@
     "target": 12799.0,
     "active": true,
     "time": "2026-11-15 14:44:44"
+  },
+  {
+    "contract": "AG0",
+    "type": "up",
+    "target": 12299.0,
+    "active": true,
+    "time": "2026-11-15 14:45:18"
   }
 ]
