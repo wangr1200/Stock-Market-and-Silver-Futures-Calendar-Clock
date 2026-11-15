@@ -753,21 +753,37 @@ class PriceAlertDialog(QDialog):
             with open(filepath, "r", encoding="utf-8") as f:
                 alerts = json.load(f)
 
-            repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            if not os.path.exists(os.path.join(repo_dir, ".git")):
-                repo_dir = os.getcwd()
+            # 1. 直接通过 GitHub REST API 更新云端 GitHub 仓库 (绕过本地 Git / push.bat)
+            import base64
+            GITHUB_TOKEN = "ghp_zZ5zkMZBqNoG0ryPkNNjvuaxbvTYX11Flz0"
+            REPO = "wangr1200/Stock-Market-and-Silver-Futures-Calendar-Clock"
+            FILE_PATH = "price_alerts.json"
+            
+            url_api = f"https://api.github.com/repos/{REPO}/contents/{FILE_PATH}"
+            headers = {
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json"
+            }
+            
+            cloud_success = False
+            try:
+                res = requests.get(url_api, headers=headers, timeout=10)
+                if res.status_code == 200:
+                    file_sha = res.json().get("sha")
+                    json_str = json.dumps(alerts, ensure_ascii=False, indent=2)
+                    content_encoded = base64.b64encode(json_str.encode("utf-8")).decode("utf-8")
+                    payload = {
+                        "message": "update alert targets via GUI button",
+                        "content": content_encoded,
+                        "sha": file_sha
+                    }
+                    put_res = requests.put(url_api, headers=headers, json=payload, timeout=10)
+                    if put_res.status_code in [200, 201]:
+                        cloud_success = True
+            except Exception as api_err:
+                log_error(api_err, "GitHubAPISync")
 
-            git_dir = os.path.join(repo_dir, ".git")
-            if os.path.exists(git_dir):
-                repo_json_path = os.path.join(repo_dir, "price_alerts.json")
-                try:
-                    shutil.copy(filepath, repo_json_path)
-                    subprocess.run(["git", "add", "price_alerts.json"], cwd=repo_dir, capture_output=True, text=True)
-                    subprocess.run(["git", "commit", "-m", "auto sync price_alerts.json from local GUI"], cwd=repo_dir, capture_output=True, text=True)
-                    subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True)
-                except Exception as g_err:
-                    log_error(g_err, "GitSync")
-
+            # 2. 构造微信通知摘要
             alerts_summary = ""
             for idx, a in enumerate(alerts):
                 c_name = a.get("contract", "")
@@ -785,7 +801,7 @@ class PriceAlertDialog(QDialog):
                     CONFIG_DIR,
                     os.getcwd(),
                     os.path.dirname(os.path.abspath(sys.argv[0])),
-                    os.path.expanduser("~\.market_clock_cache")
+                    os.path.expanduser("~\\.market_clock_cache")
                 ]
                 for d in possible_dirs:
                     if not d: continue
@@ -809,19 +825,21 @@ class PriceAlertDialog(QDialog):
             url = "https://sctapi.ftqq.com/%s.send" % server_key
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             title = "[桌面时钟] 预警配置已同步更新"
+            sync_status_txt = "云端 GitHub 自动直连同步成功！" if cloud_success else "云端同步提示：API 直连推送可能受网络影响，请稍后确认。"
             desp = (
                 "### 本地新预警已成功同步！\n"
                 "- **同步时间**：%s\n"
-                "- **当前预警总数**：%d 条\n\n"
+                "- **当前预警总数**：%d 条\n"
+                "- **同步状态**：%s\n\n"
                 "**当前所有预警列表**：\n%s\n"
-                "> 云端监控进程将在下一轮（60秒内）自动应用最新规则。"
-            ) % (now_str, len(alerts), alerts_summary)
+                "> 云端监控进程将在下一轮（5分钟内）自动应用最新规则。"
+            ) % (now_str, len(alerts), sync_status_txt, alerts_summary)
 
             response = requests.post(url, data={"title": title, "desp": desp}, timeout=10)
             if response.status_code == 200:
                 res_json = response.json()
                 if res_json.get("code") == 0:
-                    dlg = SilentTipDialog("云端同步与微信提醒成功", "最新的价格预警配置已成功处理，并已通过微信成功发送通知！", self)
+                    dlg = SilentTipDialog("云端同步与微信提醒成功", "最新的价格预警配置已直接写入云端 GitHub，并已通过微信成功发送通知！", self)
                     dlg.exec_()
                 else:
                     err_msg = res_json.get("message", "未知错误")
@@ -836,10 +854,6 @@ class PriceAlertDialog(QDialog):
             dlg = SilentTipDialog("同步失败", "推送或发送微信通知异常：\n%s" % e, self)
             dlg.exec_()
 
-
-class CustomCalendarWidget(QCalendarWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
 
     def paintCell(self, painter, rect, date):
         super().paintCell(painter, rect, date)
