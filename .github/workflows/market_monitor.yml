@@ -1,0 +1,35 @@
+name: Market Price Monitor
+
+on:
+  schedule:
+    # 1. 国内白银期货日盘（北京时间 09:00 - 15:00 -> UTC 01:00 - 07:00，周一至周五）
+    - cron: '*/5 1-7 * * 1-5'
+    # 2. 国内白银期货夜盘上半场（北京时间 21:00 - 23:59 -> UTC 13:00 - 15:59，周一至周五）
+    - cron: '*/5 13-15 * * 1-5'
+    # 3. 国内白银期货夜盘下半场（北京时间次日 00:00 - 02:30 -> UTC 16:00 - 18:30，周二至周六）
+    - cron: '*/5 16-18 * * 2-6'
+  workflow_dispatch: # 保留网页端手动测试按钮
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests akshare pandas
+
+      - name: Run monitoring script
+        env:
+          SERVER_CHAN_KEY: ${{ secrets.SERVER_CHAN_KEY }}
+          GITHUB_ACTIONS: "true"
+        run: |
+          python wx_bot_monitor.py
